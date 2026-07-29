@@ -43,7 +43,7 @@ func TestFinishFindSimilarSearchPolarityWiring(t *testing.T) {
 		body, hit, err := c.finishFindSimilarSearch(
 			time.Now(), "model-x",
 			"How do I disable two-factor authentication?", // antonym of the cached query
-			threshold, 0, entry, aboveThreshold, 1, 0,
+			threshold, cacheSearchResult{bestIndex: 0, bestEntry: entry, bestSimilarity: aboveThreshold, entriesChecked: 1},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -61,7 +61,7 @@ func TestFinishFindSimilarSearchPolarityWiring(t *testing.T) {
 		body, hit, err := c.finishFindSimilarSearch(
 			time.Now(), "model-x",
 			"How do I enable two-factor authentication?", // identical to the cached query
-			threshold, 0, entry, aboveThreshold, 1, 0,
+			threshold, cacheSearchResult{bestIndex: 0, bestEntry: entry, bestSimilarity: aboveThreshold, entriesChecked: 1},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

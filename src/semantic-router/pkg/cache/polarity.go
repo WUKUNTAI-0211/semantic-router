@@ -106,6 +106,9 @@ var irregularContractions = [][2]string{
 // tokens (order and repetition are irrelevant to the polarity check).
 func tokenizeForPolarity(s string) map[string]struct{} {
 	s = strings.ToLower(s)
+	// Normalize typographic apostrophes before expanding contractions so ASCII
+	// and curly-apostrophe contractions take the same negation path.
+	s = strings.ReplaceAll(s, "’", "'")
 	// Expand irregular contractions first so their real stem is preserved,
 	// then the regular rule handles "isn't" -> "is not", "doesn't" -> "does
 	// not", etc.

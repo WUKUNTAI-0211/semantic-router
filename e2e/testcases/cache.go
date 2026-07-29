@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +46,12 @@ type CacheResult struct {
 	Error            string
 }
 
+type cacheRunSummary struct {
+	results       []CacheResult
+	totalRequests int
+	cacheHits     int
+}
+
 func testCache(ctx context.Context, client *kubernetes.Clientset, opts pkgtestcases.TestCaseOptions) error {
 	if opts.Verbose {
 		fmt.Println("[Test] Testing semantic cache functionality")
@@ -63,90 +70,33 @@ func testCache(ctx context.Context, client *kubernetes.Clientset, opts pkgtestca
 		return fmt.Errorf("failed to load test cases: %w", err)
 	}
 
-	// Run cache tests
-	var results []CacheResult
-	var negationFalseHits []string
-	totalRequests := 0
-	cacheHits := 0
-
-	for _, testCase := range testCases {
-		// Send original question first (should not hit cache)
-		if opts.Verbose {
-			fmt.Printf("[Test] Sending original question: %s\n", testCase.OriginalQuestion)
-		}
-		_, err := sendChatRequest(ctx, testCase.OriginalQuestion, localPort, opts.Verbose)
-		if err != nil {
-			if opts.Verbose {
-				fmt.Printf("[Test] Error sending original question: %v\n", err)
-			}
-			continue
-		}
-
-		// Wait a bit to ensure cache is populated
-		time.Sleep(1 * time.Second)
-
-		// Send similar questions (should hit cache)
-		for _, similarQuestion := range testCase.SimilarQuestions {
-			totalRequests++
-			result := testSingleCacheRequest(ctx, testCase, similarQuestion, localPort, opts.Verbose)
-			results = append(results, result)
-			if result.CacheHit {
-				cacheHits++
-			}
-		}
-
-		// Send negation / antonym variants (must NOT hit cache): the polarity
-		// guard (#2691) must not serve the opposite-meaning cached answer. A
-		// cache hit here is an acceptance failure, not just a metric.
-		for _, negationQuestion := range testCase.NegationQuestions {
-			result := testSingleCacheRequest(ctx, testCase, negationQuestion, localPort, opts.Verbose)
-			if result.Error != "" {
-				if opts.Verbose {
-					fmt.Printf("[Test] Error sending negation question %q: %s\n", negationQuestion, result.Error)
-				}
-				continue
-			}
-			if result.CacheHit {
-				negationFalseHits = append(negationFalseHits,
-					fmt.Sprintf("%q served the cached answer for %q", negationQuestion, testCase.OriginalQuestion))
-				if opts.Verbose {
-					fmt.Printf("[Test] ✗ NEGATION FALSE-HIT: %s\n", negationQuestion)
-				}
-			} else if opts.Verbose {
-				fmt.Printf("[Test] ✓ Negation correctly missed: %s\n", negationQuestion)
-			}
-		}
+	summary, err := runCacheCases(ctx, testCases, localPort, opts.Verbose)
+	if err != nil {
+		return err
 	}
 
-	// Calculate hit rate
+	// Calculate hit rate for the baseline similar-question probe.
 	hitRate := float64(0)
-	if totalRequests > 0 {
-		hitRate = float64(cacheHits) / float64(totalRequests) * 100
+	if summary.totalRequests > 0 {
+		hitRate = float64(summary.cacheHits) / float64(summary.totalRequests) * 100
 	}
 
 	// Set details for reporting
 	if opts.SetDetails != nil {
 		opts.SetDetails(map[string]interface{}{
-			"total_requests": totalRequests,
-			"cache_hits":     cacheHits,
-			"cache_misses":   totalRequests - cacheHits,
+			"total_requests": summary.totalRequests,
+			"cache_hits":     summary.cacheHits,
+			"cache_misses":   summary.totalRequests - summary.cacheHits,
 			"hit_rate":       fmt.Sprintf("%.2f%%", hitRate),
 		})
 	}
 
 	// Print results
-	printCacheResults(results, totalRequests, cacheHits, hitRate)
+	printCacheResults(summary.results, summary.totalRequests, summary.cacheHits, hitRate)
 
 	if opts.Verbose {
 		fmt.Printf("[Test] Cache test completed: %d/%d cache hits (%.2f%% hit rate)\n",
-			cacheHits, totalRequests, hitRate)
-	}
-
-	// A negation/antonym variant being served the cached answer is a
-	// correctness failure of the polarity guard (#2691), so fail the test.
-	if len(negationFalseHits) > 0 {
-		return fmt.Errorf("polarity guard: %d negation/antonym variant(s) incorrectly served a cached answer: %v",
-			len(negationFalseHits), negationFalseHits)
+			summary.cacheHits, summary.totalRequests, hitRate)
 	}
 
 	return nil
@@ -162,8 +112,129 @@ func loadCacheCases(filepath string) ([]CacheTestCase, error) {
 	if err := json.Unmarshal(data, &cases); err != nil {
 		return nil, fmt.Errorf("failed to parse test cases: %w", err)
 	}
+	if err := validateCacheCases(cases); err != nil {
+		return nil, err
+	}
 
 	return cases, nil
+}
+
+func validateCacheCases(cases []CacheTestCase) error {
+	if len(cases) == 0 {
+		return fmt.Errorf("cache test fixture contains no cases")
+	}
+
+	negationControls := 0
+	for i, testCase := range cases {
+		if strings.TrimSpace(testCase.OriginalQuestion) == "" {
+			return fmt.Errorf("cache case %d has an empty original_question", i)
+		}
+		if len(testCase.SimilarQuestions) == 0 {
+			return fmt.Errorf("cache case %d must define similar_questions as a positive cache-hit control", i)
+		}
+		for _, question := range testCase.SimilarQuestions {
+			if strings.TrimSpace(question) == "" {
+				return fmt.Errorf("cache case %d has an empty similar_questions entry", i)
+			}
+		}
+		if len(testCase.NegationQuestions) == 0 {
+			continue
+		}
+		negationControls++
+		for _, question := range testCase.NegationQuestions {
+			if strings.TrimSpace(question) == "" {
+				return fmt.Errorf("cache case %d has an empty negation_questions entry", i)
+			}
+		}
+	}
+
+	if negationControls == 0 {
+		return fmt.Errorf("cache test fixture must define negation_questions for at least one acceptance case")
+	}
+	return nil
+}
+
+func runCacheCases(ctx context.Context, testCases []CacheTestCase, localPort string, verbose bool) (cacheRunSummary, error) {
+	var summary cacheRunSummary
+	for _, testCase := range testCases {
+		results, err := runCacheCase(ctx, testCase, localPort, verbose)
+		if err != nil {
+			return cacheRunSummary{}, err
+		}
+		summary.results = append(summary.results, results...)
+		for _, result := range results {
+			summary.totalRequests++
+			if result.CacheHit {
+				summary.cacheHits++
+			}
+		}
+	}
+	return summary, nil
+}
+
+func runCacheCase(ctx context.Context, testCase CacheTestCase, localPort string, verbose bool) ([]CacheResult, error) {
+	if verbose {
+		fmt.Printf("[Test] Sending original question: %s\n", testCase.OriginalQuestion)
+	}
+	if _, err := sendChatRequest(ctx, testCase.OriginalQuestion, localPort, verbose); err != nil {
+		if len(testCase.NegationQuestions) == 0 {
+			if verbose {
+				fmt.Printf("[Test] Error sending original question: %v\n", err)
+			}
+			return nil, nil
+		}
+		return nil, fmt.Errorf("polarity guard seed %q: %w", testCase.OriginalQuestion, err)
+	}
+
+	// The cache write follows the response path, so allow it to settle before
+	// evaluating the positive and negative acceptance controls.
+	time.Sleep(time.Second)
+	results := runSimilarCacheRequests(ctx, testCase, localPort, verbose)
+	if len(testCase.NegationQuestions) == 0 {
+		return results, nil
+	}
+	if err := requireCacheHits(testCase, results); err != nil {
+		return nil, err
+	}
+	if err := requireCacheMisses(ctx, testCase, localPort, verbose); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func runSimilarCacheRequests(ctx context.Context, testCase CacheTestCase, localPort string, verbose bool) []CacheResult {
+	results := make([]CacheResult, 0, len(testCase.SimilarQuestions))
+	for _, question := range testCase.SimilarQuestions {
+		results = append(results, testSingleCacheRequest(ctx, testCase, question, localPort, verbose))
+	}
+	return results
+}
+
+func requireCacheHits(testCase CacheTestCase, results []CacheResult) error {
+	for _, result := range results {
+		if result.Error != "" {
+			return fmt.Errorf("polarity guard positive control %q: %s", result.SimilarQuestion, result.Error)
+		}
+		if !result.CacheHit {
+			return fmt.Errorf("polarity guard positive control %q did not hit the cache for %q",
+				result.SimilarQuestion, testCase.OriginalQuestion)
+		}
+	}
+	return nil
+}
+
+func requireCacheMisses(ctx context.Context, testCase CacheTestCase, localPort string, verbose bool) error {
+	for _, question := range testCase.NegationQuestions {
+		result := testSingleCacheRequest(ctx, testCase, question, localPort, verbose)
+		if result.Error != "" {
+			return fmt.Errorf("polarity guard negative control %q: %s", question, result.Error)
+		}
+		if result.CacheHit {
+			return fmt.Errorf("polarity guard negative control %q served the cached answer for %q",
+				question, testCase.OriginalQuestion)
+		}
+	}
+	return nil
 }
 
 func testSingleCacheRequest(ctx context.Context, testCase CacheTestCase, question, localPort string, verbose bool) CacheResult {
@@ -240,13 +311,19 @@ func printCacheResults(results []CacheResult, totalRequests, cacheHits int, hitR
 	fmt.Printf("Cache Hits: %d\n", cacheHits)
 	fmt.Printf("Hit Rate: %.2f%%\n", hitRate)
 	fmt.Println(separator)
+	printCacheCategoryResults(results)
+	printCacheMisses(results)
+	printCacheErrors(results)
+	fmt.Println(separator + "\n")
+}
 
-	// Group results by category
-	categoryStats := make(map[string]struct {
-		total int
-		hits  int
-	})
+type cacheCategoryStats struct {
+	total int
+	hits  int
+}
 
+func printCacheCategoryResults(results []CacheResult) {
+	categoryStats := make(map[string]cacheCategoryStats)
 	for _, result := range results {
 		stats := categoryStats[result.Category]
 		stats.total++
@@ -255,50 +332,42 @@ func printCacheResults(results []CacheResult, totalRequests, cacheHits int, hitR
 		}
 		categoryStats[result.Category] = stats
 	}
-
-	// Print per-category results
 	fmt.Println("\nPer-Category Results:")
 	for category, stats := range categoryStats {
 		categoryHitRate := float64(stats.hits) / float64(stats.total) * 100
 		fmt.Printf("  - %-20s: %d/%d (%.2f%%)\n", category, stats.hits, stats.total, categoryHitRate)
 	}
+}
 
-	// Print cache misses
-	missCount := 0
+func printCacheMisses(results []CacheResult) {
+	var misses []CacheResult
 	for _, result := range results {
 		if !result.CacheHit && result.Error == "" {
-			missCount++
+			misses = append(misses, result)
 		}
 	}
-
-	if missCount > 0 {
+	if len(misses) > 0 {
 		fmt.Println("\nCache Misses:")
-		for _, result := range results {
-			if !result.CacheHit && result.Error == "" {
-				fmt.Printf("  - Original: %s\n", result.OriginalQuestion)
-				fmt.Printf("    Similar:  %s\n", result.SimilarQuestion)
-				fmt.Printf("    Category: %s\n", result.Category)
-			}
+		for _, result := range misses {
+			fmt.Printf("  - Original: %s\n", result.OriginalQuestion)
+			fmt.Printf("    Similar:  %s\n", result.SimilarQuestion)
+			fmt.Printf("    Category: %s\n", result.Category)
 		}
 	}
+}
 
-	// Print errors
-	errorCount := 0
+func printCacheErrors(results []CacheResult) {
+	var failures []CacheResult
 	for _, result := range results {
 		if result.Error != "" {
-			errorCount++
+			failures = append(failures, result)
 		}
 	}
-
-	if errorCount > 0 {
+	if len(failures) > 0 {
 		fmt.Println("\nErrors:")
-		for _, result := range results {
-			if result.Error != "" {
-				fmt.Printf("  - Question: %s\n", result.SimilarQuestion)
-				fmt.Printf("    Error: %s\n", result.Error)
-			}
+		for _, result := range failures {
+			fmt.Printf("  - Question: %s\n", result.SimilarQuestion)
+			fmt.Printf("    Error: %s\n", result.Error)
 		}
 	}
-
-	fmt.Println(separator + "\n")
 }

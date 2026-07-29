@@ -19,6 +19,7 @@ func TestPolarityMismatch(t *testing.T) {
 		{"require-not-require", "Does this feature require a license?", "Does this feature not require a license?", true},
 		{"contraction-nt", "Is the cache enabled?", "Isn't the cache enabled?", true},
 		{"contraction-cant", "Can I commit this change?", "Can't I commit this change?", true},
+		{"contraction-curly-cant", "Can I commit this change?", "Can’t I commit this change?", true},
 		{"contraction-wont", "Will it retry the request?", "Won't it retry the request?", true},
 		{"contraction-doesnt", "Does it require a license?", "Doesn't it require a license?", true},
 		{"contraction-aint", "Is the cache enabled?", "Ain't the cache enabled?", true},

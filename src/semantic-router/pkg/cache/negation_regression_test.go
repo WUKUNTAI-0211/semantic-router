@@ -102,6 +102,23 @@ func newMmbertCache(t *testing.T) *InMemoryCache {
 func TestNegationFalseHitRegressionInMemory(t *testing.T) {
 	ensureMmbert(t)
 
+	guardExercised := runNegationRegressionPairs(t)
+	if guardExercised == 0 {
+		t.Fatalf("no negation pair cleared threshold %.2f, so the guard was never exercised — embedder/threshold mismatch, the regression is not actually testing anything",
+			negationRegressionThreshold)
+	}
+	t.Logf("polarity guard exercised on %d/%d above-threshold negation pairs", guardExercised, len(negationRegressionPairs))
+
+	paraphraseExercised := runParaphraseControlPairs(t)
+	if paraphraseExercised == 0 {
+		t.Fatalf("no paraphrase control pair cleared threshold %.2f, so the guard-does-not-eat-legit-hits property was never verified",
+			negationRegressionThreshold)
+	}
+	t.Logf("paraphrase control exercised on %d/%d above-threshold pairs", paraphraseExercised, len(paraphraseControlPairs))
+}
+
+func runNegationRegressionPairs(t *testing.T) int {
+	t.Helper()
 	guardExercised := 0
 	for _, pair := range negationRegressionPairs {
 		cached, incoming := pair[0], pair[1]
@@ -130,14 +147,12 @@ func TestNegationFalseHitRegressionInMemory(t *testing.T) {
 		}
 		_ = c.Close()
 	}
+	return guardExercised
+}
 
-	if guardExercised == 0 {
-		t.Fatalf("no negation pair cleared threshold %.2f, so the guard was never exercised — embedder/threshold mismatch, the regression is not actually testing anything",
-			negationRegressionThreshold)
-	}
-	t.Logf("polarity guard exercised on %d/%d above-threshold negation pairs", guardExercised, len(negationRegressionPairs))
-
-	// Positive control: genuine paraphrases that clear the threshold must still hit.
+// runParaphraseControlPairs verifies that the guard preserves genuine cache hits.
+func runParaphraseControlPairs(t *testing.T) int {
+	t.Helper()
 	paraphraseExercised := 0
 	for _, pair := range paraphraseControlPairs {
 		cached, incoming := pair[0], pair[1]
@@ -163,10 +178,5 @@ func TestNegationFalseHitRegressionInMemory(t *testing.T) {
 		}
 		_ = c.Close()
 	}
-
-	if paraphraseExercised == 0 {
-		t.Fatalf("no paraphrase control pair cleared threshold %.2f, so the guard-does-not-eat-legit-hits property was never verified",
-			negationRegressionThreshold)
-	}
-	t.Logf("paraphrase control exercised on %d/%d above-threshold pairs", paraphraseExercised, len(paraphraseControlPairs))
+	return paraphraseExercised
 }
