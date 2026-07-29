@@ -143,7 +143,7 @@ func (c *InMemoryCache) FindSimilarWithThreshold(model string, query string, thr
 	bestIndex, bestEntry, bestSimilarity, entriesChecked, expiredCount := c.runFindSimilarEmbeddingSearch(queryEmbedding, CacheScopeNamespaceOf(query))
 
 	return c.finishFindSimilarSearch(
-		start, model, threshold,
+		start, model, query, threshold,
 		bestIndex, bestEntry, bestSimilarity, entriesChecked, expiredCount,
 	)
 }
@@ -170,9 +170,30 @@ func (c *InMemoryCache) runFindSimilarEmbeddingSearch(queryEmbedding []float32, 
 	return bestIndex, bestEntry, bestSimilarity, entriesChecked, expiredCount
 }
 
+// recordPolarityReject accounts a polarity-guard rejection as a cache miss and
+// emits the observability signal for it. The caller-visible outcome is a miss
+// (the request is recomputed); a dedicated cache_negation_reject event lets the
+// rejection be distinguished from an ordinary below-threshold miss without
+// adding a hot-path metric label.
+func (c *InMemoryCache) recordPolarityReject(start time.Time, model, query, cachedQuery string, similarity, threshold float32) {
+	atomic.AddInt64(&c.missCount, 1)
+	logging.Debugf("InMemoryCache.FindSimilarWithThreshold: POLARITY REJECT - similarity=%.4f >= threshold=%.4f but query and cached entry differ in polarity (negation/antonym); treating as miss",
+		similarity, threshold)
+	logging.LogEvent("cache_negation_reject", map[string]interface{}{
+		"backend":      "memory",
+		"similarity":   similarity,
+		"threshold":    threshold,
+		"model":        model,
+		"query":        logging.ContentDescriptor(query),
+		"cached_query": logging.ContentDescriptor(cachedQuery),
+	})
+	metrics.RecordCacheOperation("memory", "find_similar", "miss", time.Since(start).Seconds())
+}
+
 func (c *InMemoryCache) finishFindSimilarSearch(
 	start time.Time,
 	model string,
+	query string,
 	threshold float32,
 	bestIndex int,
 	bestEntry CacheEntry,
@@ -200,6 +221,15 @@ func (c *InMemoryCache) finishFindSimilarSearch(
 	c.StoreSimilarity(bestSimilarity)
 
 	if bestSimilarity >= threshold {
+		// Polarity guard: a candidate that clears the similarity threshold but
+		// is a negation / antonym variant of the cached query would serve the
+		// semantically opposite answer (#2691). Reject it and treat as a miss
+		// so the request is recomputed, rather than returning the wrong entry.
+		if polarityMismatch(query, bestEntry.Query) {
+			c.recordPolarityReject(start, model, query, bestEntry.Query, bestSimilarity, threshold)
+			return nil, false, nil
+		}
+
 		atomic.AddInt64(&c.hitCount, 1)
 
 		c.mu.Lock()
