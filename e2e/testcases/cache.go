@@ -29,6 +29,10 @@ type CacheTestCase struct {
 	Category         string   `json:"category"`
 	OriginalQuestion string   `json:"original_question"`
 	SimilarQuestions []string `json:"similar_questions"`
+	// NegationQuestions are opposite-meaning (negated / antonym) variants of
+	// OriginalQuestion. The polarity guard (#2691) must NOT serve them the
+	// cached answer, so any cache hit on one of these is an acceptance failure.
+	NegationQuestions []string `json:"negation_questions,omitempty"`
 }
 
 // CacheResult tracks the result of a cache test
@@ -61,6 +65,7 @@ func testCache(ctx context.Context, client *kubernetes.Clientset, opts pkgtestca
 
 	// Run cache tests
 	var results []CacheResult
+	var negationFalseHits []string
 	totalRequests := 0
 	cacheHits := 0
 
@@ -89,6 +94,28 @@ func testCache(ctx context.Context, client *kubernetes.Clientset, opts pkgtestca
 				cacheHits++
 			}
 		}
+
+		// Send negation / antonym variants (must NOT hit cache): the polarity
+		// guard (#2691) must not serve the opposite-meaning cached answer. A
+		// cache hit here is an acceptance failure, not just a metric.
+		for _, negationQuestion := range testCase.NegationQuestions {
+			result := testSingleCacheRequest(ctx, testCase, negationQuestion, localPort, opts.Verbose)
+			if result.Error != "" {
+				if opts.Verbose {
+					fmt.Printf("[Test] Error sending negation question %q: %s\n", negationQuestion, result.Error)
+				}
+				continue
+			}
+			if result.CacheHit {
+				negationFalseHits = append(negationFalseHits,
+					fmt.Sprintf("%q served the cached answer for %q", negationQuestion, testCase.OriginalQuestion))
+				if opts.Verbose {
+					fmt.Printf("[Test] ✗ NEGATION FALSE-HIT: %s\n", negationQuestion)
+				}
+			} else if opts.Verbose {
+				fmt.Printf("[Test] ✓ Negation correctly missed: %s\n", negationQuestion)
+			}
+		}
 	}
 
 	// Calculate hit rate
@@ -113,6 +140,13 @@ func testCache(ctx context.Context, client *kubernetes.Clientset, opts pkgtestca
 	if opts.Verbose {
 		fmt.Printf("[Test] Cache test completed: %d/%d cache hits (%.2f%% hit rate)\n",
 			cacheHits, totalRequests, hitRate)
+	}
+
+	// A negation/antonym variant being served the cached answer is a
+	// correctness failure of the polarity guard (#2691), so fail the test.
+	if len(negationFalseHits) > 0 {
+		return fmt.Errorf("polarity guard: %d negation/antonym variant(s) incorrectly served a cached answer: %v",
+			len(negationFalseHits), negationFalseHits)
 	}
 
 	return nil

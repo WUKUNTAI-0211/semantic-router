@@ -34,5 +34,16 @@
       "How can I brew a delicious cup of coffee?",
       "What's the method for making good coffee?"
     ]
+  },
+  {
+    "description": "Negation guard (#2691) - opposite-meaning variants must not be served the cached answer",
+    "category": "negation",
+    "original_question": "Is caching enabled in production?",
+    "similar_questions": [
+      "Is caching enabled in prod?"
+    ],
+    "negation_questions": [
+      "Is caching disabled in production?"
+    ]
   }
 ]
