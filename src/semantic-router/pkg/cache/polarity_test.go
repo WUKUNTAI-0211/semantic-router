@@ -1,6 +1,10 @@
 package cache
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 // TestPolarityMismatch exercises the lexical polarity guard as a pure function
 // (no embedding model required, so it always runs in CI). It asserts that
@@ -35,6 +39,8 @@ func TestPolarityMismatch(t *testing.T) {
 		{"active-inactive", "Is the API rate limit currently active?", "Is the API rate limit currently inactive?", true},
 		{"increase-decrease", "Can I increase my storage quota?", "Can I decrease my storage quota?", true},
 		{"start-stop", "How do I start the service?", "How do I stop the service?", true},
+		{"add-remove-direct", "How do I add a tag?", "How do I remove a tag?", true},
+		{"grant-revoke-direct", "How do I grant admin access to the dashboard?", "How do I revoke admin access to the dashboard?", true},
 
 		// --- genuine paraphrase (must NOT reject) ---
 		{"paraphrase-password", "How do I reset my password?", "What's the way to reset my password?", false},
@@ -51,9 +57,7 @@ func TestPolarityMismatch(t *testing.T) {
 		// --- surface gate: antonym present but too many other tokens differ ---
 		{"antonym-but-far", "How do I enable the new dashboard widget?", "How do I disable the old sidebar menu?", false},
 
-		// --- verb+preposition antonyms are intentionally NOT guarded: their
-		//     idiomatic phrasing flips a preposition too, exceeding the token gate,
-		//     so they are omitted from antonymFlip rather than left as dead config.
+		// --- verb+preposition variants exceed the token gate and are not guarded ---
 		{"add-remove-unguarded", "How do I add a member to the team?", "How do I remove a member from the team?", false},
 		{"grant-revoke-unguarded", "How do I grant access to the bucket?", "How do I revoke access from the bucket?", false},
 	}
@@ -77,5 +81,12 @@ func TestTruncateForLog(t *testing.T) {
 	got := truncateForLog(long)
 	if len(got) != 53 || got[len(got)-3:] != "..." { // 50 chars + "..."
 		t.Errorf("truncateForLog(long) = %q (len %d), want 50-char prefix + \"...\"", got, len(got))
+	}
+
+	multibyte := strings.Repeat("a", 49) + "界" + "trailing"
+	got = truncateForLog(multibyte)
+	want := strings.Repeat("a", 49) + "界..."
+	if got != want || !utf8.ValidString(got) {
+		t.Errorf("truncateForLog(multibyte) = %q, want valid UTF-8 %q", got, want)
 	}
 }
