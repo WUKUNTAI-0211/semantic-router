@@ -1,10 +1,6 @@
 package cache
 
-import (
-	"strings"
-	"testing"
-	"unicode/utf8"
-)
+import "testing"
 
 // TestPolarityMismatch exercises the lexical polarity guard as a pure function
 // (no embedding model required, so it always runs in CI). It asserts that
@@ -68,25 +64,5 @@ func TestPolarityMismatch(t *testing.T) {
 				t.Errorf("polarityMismatch(%q, %q) = %v, want %v", tt.incoming, tt.cached, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestTruncateForLog(t *testing.T) {
-	short := "short query"
-	if got := truncateForLog(short); got != short {
-		t.Errorf("truncateForLog(%q) = %q, want unchanged", short, got)
-	}
-
-	long := "this is a query that is definitely longer than fifty characters in total"
-	got := truncateForLog(long)
-	if len(got) != 53 || got[len(got)-3:] != "..." { // 50 chars + "..."
-		t.Errorf("truncateForLog(long) = %q (len %d), want 50-char prefix + \"...\"", got, len(got))
-	}
-
-	multibyte := strings.Repeat("a", 49) + "界" + "trailing"
-	got = truncateForLog(multibyte)
-	want := strings.Repeat("a", 49) + "界..."
-	if got != want || !utf8.ValidString(got) {
-		t.Errorf("truncateForLog(multibyte) = %q, want valid UTF-8 %q", got, want)
 	}
 }

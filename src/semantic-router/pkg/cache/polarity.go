@@ -139,23 +139,6 @@ func diffTokens(a, b map[string]struct{}) []string {
 	return only
 }
 
-// truncateForLog shortens a query for structured log events so full user
-// prompts are not emitted verbatim and log lines stay bounded.
-func truncateForLog(s string) string {
-	const max = 50
-	if len(s) <= max {
-		return s
-	}
-	runeCount := 0
-	for byteIndex := range s {
-		if runeCount == max {
-			return s[:byteIndex] + "..."
-		}
-		runeCount++
-	}
-	return s
-}
-
 func containsAny(tokens []string, cues map[string]struct{}) bool {
 	for _, tok := range tokens {
 		if _, ok := cues[tok]; ok {
