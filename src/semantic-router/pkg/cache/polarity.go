@@ -3,6 +3,7 @@ package cache
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Polarity guard for the semantic cache.
@@ -55,6 +56,11 @@ var negationCues = map[string]struct{}{
 // below). A flip fires only when one query has token X and the other has an
 // antonym of X in its differing tokens, so an unpaired occurrence (e.g. "turn
 // on 2FA" with no "off" anywhere) does not trigger it.
+// Only single-token swaps belong here. A verb whose idiomatic form also flips a
+// governing preposition (add X *to* / remove X *from*, grant X *to* / revoke X
+// *from*) produces two differing tokens per side, exceeding tokenDiffLimit, so
+// the guard could never fire on realistic phrasings — such pairs are omitted
+// rather than left as dead configuration.
 var antonymFlip = buildAntonymFlip([][2]string{
 	{"enable", "disable"},
 	{"enabled", "disabled"},
@@ -62,8 +68,6 @@ var antonymFlip = buildAntonymFlip([][2]string{
 	{"open", "closed"},
 	{"open", "close"},
 	{"start", "stop"},
-	{"add", "remove"},
-	{"grant", "revoke"},
 	{"increase", "decrease"},
 	{"active", "inactive"},
 	{"forward", "back"},
@@ -140,10 +144,12 @@ func diffTokens(a, b map[string]struct{}) []string {
 // prompts are not emitted verbatim and log lines stay bounded.
 func truncateForLog(s string) string {
 	const max = 50
-	if len(s) > max {
-		return s[:max] + "..."
+	if utf8.RuneCountInString(s) <= max {
+		return s
 	}
-	return s
+	// Cut on a rune boundary so a multi-byte character straddling the limit is
+	// never sliced into invalid UTF-8 in the emitted log event.
+	return string([]rune(s)[:max]) + "..."
 }
 
 func containsAny(tokens []string, cues map[string]struct{}) bool {

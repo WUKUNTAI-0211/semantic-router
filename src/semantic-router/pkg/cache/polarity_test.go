@@ -34,6 +34,7 @@ func TestPolarityMismatch(t *testing.T) {
 		{"open-closed", "Is port 6379 open by default?", "Is port 6379 closed by default?", true},
 		{"active-inactive", "Is the API rate limit currently active?", "Is the API rate limit currently inactive?", true},
 		{"increase-decrease", "Can I increase my storage quota?", "Can I decrease my storage quota?", true},
+		{"start-stop", "How do I start the service?", "How do I stop the service?", true},
 
 		// --- genuine paraphrase (must NOT reject) ---
 		{"paraphrase-password", "How do I reset my password?", "What's the way to reset my password?", false},
@@ -48,7 +49,13 @@ func TestPolarityMismatch(t *testing.T) {
 		{"unpaired-on", "How to turn on dark mode?", "How to turn on light mode?", false},
 
 		// --- surface gate: antonym present but too many other tokens differ ---
-		{"antonym-but-far", "How do I add a member to the team?", "How do I remove a member from the team?", false},
+		{"antonym-but-far", "How do I enable the new dashboard widget?", "How do I disable the old sidebar menu?", false},
+
+		// --- verb+preposition antonyms are intentionally NOT guarded: their
+		//     idiomatic phrasing flips a preposition too, exceeding the token gate,
+		//     so they are omitted from antonymFlip rather than left as dead config.
+		{"add-remove-unguarded", "How do I add a member to the team?", "How do I remove a member from the team?", false},
+		{"grant-revoke-unguarded", "How do I grant access to the bucket?", "How do I revoke access from the bucket?", false},
 	}
 
 	for _, tt := range tests {

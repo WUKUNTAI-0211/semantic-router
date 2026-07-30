@@ -263,15 +263,11 @@ func (c *InMemoryCache) finishFindSimilarSearch(
 	c.StoreSimilarity(search.bestSimilarity)
 
 	if search.bestSimilarity >= threshold {
-		// Polarity guard: a candidate that clears the similarity threshold but
-		// is a negation / antonym variant of the cached query would serve the
-		// semantically opposite answer (#2691). Reject it and treat as a miss
-		// so the request is recomputed, rather than returning the wrong entry.
-		if polarityMismatch(query, search.bestEntry.Query) {
-			c.recordPolarityReject(start, model, query, search.bestEntry.Query, search.bestSimilarity, threshold)
-			return nil, false, nil
-		}
-
+		// The polarity guard (#2691) runs per candidate in considerSearchCandidate:
+		// any above-threshold negation/antonym variant is diverted to
+		// polarityRejected before it can win bestEntry, and the all-rejected case
+		// is handled above. So a winner reaching here is already known not to be a
+		// polarity mismatch — no second check is needed on the hot path.
 		atomic.AddInt64(&c.hitCount, 1)
 
 		c.mu.Lock()
