@@ -40,7 +40,7 @@
     "category": "negation",
     "original_question": "Is caching enabled in production?",
     "similar_questions": [
-      "Is caching enabled in prod?"
+      "In production, is caching enabled?"
     ],
     "negation_questions": [
       "Is caching disabled in production?"
