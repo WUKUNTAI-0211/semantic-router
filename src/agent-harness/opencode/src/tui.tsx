@@ -158,14 +158,15 @@ export default Plugin.define({
       if (wait !== undefined)
         await controller.change({ waits: { [app]: wait } });
     }
-    const call = { ...options, signal: AbortSignal.timeout(10_000) };
+    // Each call gets its own timeout: one signal made at load would have fired for every call after the first 10 s.
+    const call = () => ({ ...options, signal: AbortSignal.timeout(10_000) });
     // Calibration: pick an app, answer questions about its decisions nearest the line, pick a goal, then apply
     // the fitted line or keep the current one. Nothing changes until the person applies it.
     async function calibrate() {
       try {
         const found = (await remote.calibrationReport(
           {},
-          call,
+          call(),
         )) as CalibrationReport;
         const app = await ctx.ui.dialog.select<App>({
           title: "vSR calibrate: which app?",
@@ -186,7 +187,7 @@ export default Plugin.define({
         }
         const questions = (await remote.calibrationSample(
           { app },
-          call,
+          call(),
         )) as CalibrationQuestion[];
         for (const question of questions) {
           const asked = calibrationQuestion(question);
@@ -201,7 +202,7 @@ export default Plugin.define({
           if (answer !== "skip")
             await remote.calibrationLabel(
               { id: question.id, label: answer },
-              call,
+              call(),
             );
         }
         const goal =
@@ -230,7 +231,7 @@ export default Plugin.define({
         if (!goal) return;
         const suggested = (await remote.calibrationSuggest(
           { app, goal },
-          call,
+          call(),
         )) as CalibrationSuggestion;
         if (!suggested.changed) {
           await ctx.ui.dialog.alert({
@@ -245,7 +246,7 @@ export default Plugin.define({
           label: { confirm: "Apply", cancel: "Keep the current lines" },
         });
         if (!apply) return;
-        const done = (await remote.calibrationApply({ app, goal }, call)) as {
+        const done = (await remote.calibrationApply({ app, goal }, call())) as {
           applied: boolean;
         };
         ctx.ui.toast.show({

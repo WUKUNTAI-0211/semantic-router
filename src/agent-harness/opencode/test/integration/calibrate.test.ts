@@ -47,17 +47,18 @@ test(
     const second = await native.run("OUTPUT_CASE READ");
     const screen = await native.terminal(
       second.sessionID,
+      // Opened well after the TUI started, as a person would, not in its first seconds.
       [
-        { at: 2000, keys: "/vsr-calibrate" },
-        { at: 2800, keys: "\r" },
-        { at: 4000, keys: "Shield" },
-        { at: 4600, keys: "\r" },
-        { at: 6000, keys: "\r" }, // Yes, it should have warned.
-        { at: 7500, keys: "\r" }, // And the next one, if any.
-        { at: 9000, keys: "\r" },
-        { at: 10500, keys: "\r" }, // Balanced.
+        { at: 12000, keys: "/vsr-calibrate" },
+        { at: 12800, keys: "\r" },
+        { at: 14000, keys: "Shield" },
+        { at: 14600, keys: "\r" },
+        { at: 16000, keys: "\r" }, // Yes, it should have warned.
+        { at: 17500, keys: "\r" }, // And the next one, if any.
+        { at: 19000, keys: "\r" },
+        { at: 20500, keys: "\r" }, // Balanced.
       ],
-      13,
+      23,
     );
     assert.ok(
       screen.text.includes("vSR calibrate: which app?") &&
