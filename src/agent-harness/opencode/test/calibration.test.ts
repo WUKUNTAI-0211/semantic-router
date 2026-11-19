@@ -14,7 +14,14 @@ import { DecisionLog, KEPT_LINES, labelOf, lineOf } from "../src/log.ts";
 import type { LogLine, LogStore } from "../src/log.ts";
 import { parseSettings } from "../src/settings.ts";
 import type { App } from "../src/settings.ts";
-import { calibrationQuestion, suggestionText } from "../src/view.ts";
+import {
+  calibrationQuestion,
+  calibrationReportText,
+  listed,
+  suggestionText,
+  suggestionsText,
+} from "../src/view.ts";
+import type { CalibrationReport } from "../src/view.ts";
 
 const settings = () =>
   parseSettings({
@@ -484,5 +491,134 @@ test("a suggestion says what each line does, what it would do on the log, and wh
   assert.match(
     suggestionText(routed, "balanced"),
     /^Light line 0\.65 → 0\.\d\d: [^\n]+\n[^\n]+\n[^\n]+\n\nOn your log: 4 tasks that went to the light model would go to the medium model\./,
+  );
+});
+
+test("several apps' suggestions read as Claude Code's: the aim once, each app under its name, then what to apply", () => {
+  const guard = (score: number, label: "yes" | "no") =>
+    line("guard", { scores: [score], label });
+  const lines = [
+    ...[0.76, 0.8, 0.82, 0.85].map((score) => guard(score, "yes")),
+    ...[0.1, 0.2, 0.3, 0.35].map((score) => guard(score, "no")),
+    line("shield", { scores: [0.5], label: "yes" }),
+  ];
+  const both = [
+    suggest(lines, "guard", [0.9]),
+    suggest(lines, "shield", [0.9]),
+  ];
+  const text = suggestionsText(both, "balanced");
+  assert.match(
+    text,
+    /^Aim: balanced: [^\n]+\.\n\nRisky commands \(asks you before a risky command runs\)\n  Review line 0\.90 → 0\.76: /,
+  );
+  assert.equal(text.match(/Aim:/g)?.length, 1, "the aim is said once");
+  assert.match(
+    text,
+    /\n\nInjection warnings \(warns the agent when a file or page tries to instruct it\)\n  Warning line stays 0\.90: /,
+  );
+  assert.match(text, /  Not enough answers yet: 1 of 8 /);
+  assert.match(
+    text,
+    /\nOverall: apply the changes for Risky commands; keep the rest\.$/,
+  );
+  assert.match(
+    suggestionsText([both[1]!]),
+    /^Warning line stays/,
+    "one app reads as before",
+  );
+  assert.match(
+    suggestionsText([both[1]!, both[1]!]),
+    /Overall: keep the current lines\.$/,
+  );
+  assert.equal(
+    listed(["Guard", "Shield", "Redact"]),
+    "Guard, Shield and Redact",
+  );
+});
+
+test("the report says what the log holds for the chosen apps, as Claude Code's step 2, and which answers it counts", () => {
+  const app = (
+    name: CalibrationReport["apps"][number]["app"],
+    extra: Partial<CalibrationReport["apps"][number]>,
+  ): CalibrationReport["apps"][number] => ({
+    app: name,
+    enabled: true,
+    decisions: 0,
+    answered: 0,
+    acted: 0,
+    explicit: 0,
+    implied: 0,
+    thresholds: [0.9],
+    calibrated: false,
+    ...extra,
+  });
+  const found: CalibrationReport = {
+    persistence: "durable",
+    since: 0,
+    remind: false,
+    model: "vela3-lite",
+    first: new Date(2026, 10, 17, 9).getTime(),
+    last: new Date(2026, 10, 19, 18).getTime(),
+    apps: [
+      app("guard", {
+        decisions: 25,
+        acted: 1,
+        answered: 5,
+        explicit: 4,
+        implied: 1,
+      }),
+      app("router", {
+        decisions: 6,
+        routes: [3, 2, 0, 1],
+        thresholds: [0.65, 1.5, 0.5],
+      }),
+      app("shield", { decisions: 4, acted: 2, enabled: false }),
+      app("check", {}),
+    ],
+  };
+  const text = calibrationReportText(found, [
+    "guard",
+    "router",
+    "shield",
+    "check",
+  ]);
+  assert.match(
+    text,
+    /^vSR's log holds 35 decisions from 2026-11-17 to 2026-11-19\.\nDecision model now: vela3-lite; not calibrated before\./,
+  );
+  assert.match(
+    text,
+    /\n\nRisky commands \(asks you before a risky command runs\)\n  25 commands: 1 held for you, 24 allowed\. You answered 4 \(\+1 your declines imply\); 8 are needed to tune\./,
+  );
+  assert.match(
+    text,
+    /\n  6 subagents: 3 went to the light model, 2 to medium, 0 to strong, 1 kept its own model\. You answered 0; /,
+  );
+  assert.match(
+    text,
+    /Injection warnings \([^)]+\) — off in your settings\n  4 files or pages read: the agent was warned about 2, 2 passed\./,
+  );
+  assert.match(text, /Answer checks \([^)]+\)\n  No decisions logged yet\./);
+  assert.match(
+    text,
+    /The log already counts some answers for you: a held command you declined counts as "should ask", and pushback within 15 minutes of a light or medium route counts as "needed stronger"\.$/,
+  );
+  assert.doesNotMatch(
+    calibrationReportText({ ...found, at: 1, calibratedModel: "vela3-fast" }, [
+      "shield",
+    ]),
+    /already counts/,
+    "said only when router or guard is chosen",
+  );
+  assert.match(
+    calibrationReportText(
+      {
+        ...found,
+        at: new Date(2026, 10, 18).getTime(),
+        calibratedModel: "vela3-fast",
+      },
+      ["shield"],
+    ),
+    /last calibrated 2026-11-18 with vela3-fast\./,
   );
 });

@@ -23,7 +23,10 @@ import {
   report,
   shortSubject,
   subjectLine,
-  suggestionText,
+  suggestionsText,
+  listed,
+  APP_WORDS,
+  calibrationReportText,
   summary,
   THEME_TOKENS,
   tokenCount,
@@ -182,67 +185,223 @@ export default Plugin.define({
         return undefined;
       }
     }
-    // Calibration: pick an app, answer questions about its decisions nearest the line, pick a goal, then apply
-    // the fitted line or keep the current one. Nothing changes until the person applies it.
+    // Calibration, as the Claude Code plugin's /vsr:calibrate: pick an app or several, answer questions about their
+    // decisions nearest each line, pick a goal, then apply the fitted lines or keep the current ones. Nothing changes
+    // until the person applies it.
+    async function pickApps(
+      found: CalibrationReport,
+    ): Promise<App[] | undefined> {
+      const usable = found.apps.filter((item) => item.decisions > 0);
+      // As the Claude Code plugin's step 1: the plain name, what the app does and its answers.
+      const title = (item: CalibrationReport["apps"][number]) =>
+        `${APP_WORDS[item.app][0]}${item.enabled ? "" : " (off)"}${item.answered >= MIN_LABELS ? " (recommended)" : ""}`;
+      const describe = (item: CalibrationReport["apps"][number]) =>
+        // The answer count first: a long purpose is cut at the dialog's edge.
+        `${item.answered} answer${item.answered === 1 ? "" : "s"}${item.calibrated ? " · calibrated" : ""} · ${APP_WORDS[item.app][1]}`;
+      const one = await wide(
+        ctx.ui.dialog.select<App | "several">({
+          title: "vSR calibrate: which app?",
+          options: [
+            ...usable.map((item) => ({
+              value: item.app,
+              title: title(item),
+              description: describe(item),
+            })),
+            ...(usable.length > 1
+              ? [
+                  {
+                    value: "several" as const,
+                    title: "Several apps at once",
+                    description:
+                      "pick them, then answer, aim and apply together",
+                  },
+                ]
+              : []),
+          ],
+        }),
+      );
+      if (one !== "several") return one ? [one] : undefined;
+      return pickSeveral(usable, title, describe);
+    }
+    // A list to tick apps in, since OpenCode's select picks one: ↑↓ move, space ticks, Enter goes on, a click ticks.
+    function pickSeveral(
+      usable: CalibrationReport["apps"],
+      title: (item: CalibrationReport["apps"][number]) => string,
+      describe: (item: CalibrationReport["apps"][number]) => string,
+    ): Promise<App[] | undefined> {
+      return new Promise((resolve) => {
+        const [chosen, setChosen] = createSignal<readonly App[]>([]);
+        const [cursor, setCursor] = createSignal(0);
+        let settled = false;
+        const settle = (value: App[] | undefined) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        const ticked = () => APPS.filter((app) => chosen().includes(app));
+        const toggle = (app: App) =>
+          setChosen((list) =>
+            list.includes(app)
+              ? list.filter((one) => one !== app)
+              : [...list, app],
+          );
+        const go = () => {
+          if (!chosen().length) return;
+          settle(ticked());
+          ctx.ui.dialog.clear();
+        };
+        const move = (step: number) =>
+          setCursor((at) => (at + step + usable.length) % usable.length);
+        const Picker = () => {
+          ctx.keymap.layer(() => ({
+            mode: "global",
+            priority: 100,
+            commands: [
+              { title: "Previous app", bind: "up", run: () => move(-1) },
+              { title: "Next app", bind: "down", run: () => move(1) },
+              {
+                title: "Tick or untick the app",
+                bind: "space",
+                run: () => toggle(usable[cursor()]!.app),
+              },
+              {
+                title: "Continue with the ticked apps",
+                bind: "return",
+                run: go,
+              },
+            ],
+          }));
+          return (
+            <box flexDirection="column" paddingLeft={2} paddingRight={2}>
+              <text fg={tone("text")}>vSR calibrate: which apps?</text>
+              <text fg={tone("muted")}>
+                ↑↓ move · space tick · enter continue · esc cancel
+              </text>
+              <box flexDirection="column" marginTop={1}>
+                <For each={usable}>
+                  {(item, index) => (
+                    <box
+                      flexDirection="column"
+                      onMouseUp={() => {
+                        setCursor(index());
+                        toggle(item.app);
+                      }}
+                    >
+                      <text>
+                        <Span
+                          fg={tone(cursor() === index() ? "info" : "muted")}
+                        >
+                          {cursor() === index() ? "› " : "  "}
+                        </Span>
+                        <Span
+                          fg={tone(
+                            chosen().includes(item.app) ? "success" : "muted",
+                          )}
+                        >
+                          {chosen().includes(item.app) ? "[✓] " : "[ ] "}
+                        </Span>
+                        <Span fg={tone(cursor() === index() ? "info" : "text")}>
+                          {title(item)}
+                        </Span>
+                      </text>
+                      <text
+                        fg={tone("muted")}
+                      >{`      ${describe(item)}`}</text>
+                    </box>
+                  )}
+                </For>
+              </box>
+              <text marginTop={1} marginBottom={1} onMouseUp={go}>
+                {chosen().length ? (
+                  <Span fg={tone("info")}>
+                    {`Enter  Continue with ${listed(ticked().map((app) => APP_WORDS[app][0]))}`}
+                  </Span>
+                ) : (
+                  <Span fg={tone("muted")}>
+                    Tick at least one app to go on.
+                  </Span>
+                )}
+              </text>
+            </box>
+          );
+        };
+        ctx.renderer.clearSelection();
+        ctx.ui.dialog.show(
+          () => <Picker />,
+          () => settle(undefined),
+        );
+        ctx.ui.dialog.set({ size: "large" });
+      });
+    }
     async function calibrate() {
       try {
         const found = (await remote.calibrationReport(
           {},
           call(),
         )) as CalibrationReport;
-        const app = await ctx.ui.dialog.select<App>({
-          title: "vSR calibrate: which app?",
-          options: found.apps
-            .filter((item) => item.decisions > 0)
-            .map((item) => ({
-              value: item.app,
-              title: `${names[item.app]}${item.enabled ? "" : " (off)"}`,
-              description: `${item.decisions} decisions · ${item.answered} answered${item.calibrated ? " · calibrated" : ""}`,
-            })),
-        });
-        if (!app) {
+        const apps = await pickApps(found);
+        if (!apps) {
           if (!found.apps.some((item) => item.decisions > 0))
             ctx.ui.toast.show({
               message: "vSR has no decisions to calibrate from yet.",
             });
           return;
         }
-        // Rounds of a few questions, as Claude Code's step 4 does: while the app is short of MIN_LABELS answers and
-        // something is left to ask, offer another round.
+        // Claude Code's step 2: the log in plain words for the chosen apps, before any question.
+        const ready = await wide(
+          ctx.ui.dialog.confirm({
+            title: `vSR calibrate: ${listed(apps.map((app) => APP_WORDS[app][0]))}`,
+            message: calibrationReportText(found, apps),
+            label: { confirm: "Continue", cancel: "Stop" },
+          }),
+        );
+        if (!ready) return;
+        const sample = async (app: App, asked: Set<string>) =>
+          (await remote.calibrationSample(
+            { app, skip: [...asked] },
+            call(),
+          )) as CalibrationQuestion[];
+        // Rounds of a few questions, as Claude Code's step 4 does: while an app is short of MIN_LABELS answers and
+        // something is left to ask about it, offer another round for the apps that are short.
         const asked = new Set<string>();
+        let round = apps;
         rounds: for (;;) {
-          const questions = (await remote.calibrationSample(
-            { app, skip: [...asked] },
-            call(),
-          )) as CalibrationQuestion[];
-          for (const question of questions) {
-            asked.add(question.id);
-            const shown = calibrationQuestion(question);
-            // The decision goes under the question, once: as each option's description it was cut to one line.
-            const answer = await wide(
-              ctx.ui.dialog.select({
-                title: `${shown.title}\n\n${shown.description}`,
-                options: shown.options,
-              }),
-            );
-            if (!answer || answer === "stop") break rounds;
-            if (answer !== "skip")
-              await remote.calibrationLabel(
-                { id: question.id, label: answer },
-                call(),
+          for (const app of round)
+            for (const question of await sample(app, asked)) {
+              asked.add(question.id);
+              const shown = calibrationQuestion(question);
+              // The decision goes under the question, once: as each option's description it was cut to one line.
+              const answer = await wide(
+                ctx.ui.dialog.select({
+                  title: `${shown.title}\n\n${shown.description}`,
+                  options: shown.options,
+                }),
               );
-          }
-          const answered = (
-            (await remote.calibrationReport({}, call())) as CalibrationReport
-          ).apps.find((item) => item.app === app)!.answered;
-          if (answered >= MIN_LABELS) break;
-          const left = (await remote.calibrationSample(
-            { app, skip: [...asked] },
+              if (!answer || answer === "stop") break rounds;
+              if (answer !== "skip")
+                await remote.calibrationLabel(
+                  { id: question.id, label: answer },
+                  call(),
+                );
+            }
+          const report = (await remote.calibrationReport(
+            {},
             call(),
-          )) as CalibrationQuestion[];
-          if (!left.length) break;
+          )) as CalibrationReport;
+          const short: { app: App; answered: number }[] = [];
+          for (const app of apps) {
+            const answered = report.apps.find(
+              (item) => item.app === app,
+            )!.answered;
+            if (answered < MIN_LABELS && (await sample(app, asked)).length)
+              short.push({ app, answered });
+          }
+          if (!short.length) break;
           const more = await ctx.ui.dialog.select({
-            title: `vSR calibrate: ${answered} of ${MIN_LABELS} answers`,
+            title:
+              apps.length === 1
+                ? `vSR calibrate: ${short[0]!.answered} of ${MIN_LABELS} answers`
+                : `vSR calibrate: ${short.map((item) => `${APP_WORDS[item.app][0]} ${item.answered} of ${MIN_LABELS}`).join(", ")} answers`,
             options: [
               {
                 value: "more" as const,
@@ -257,74 +416,117 @@ export default Plugin.define({
             ],
           });
           if (more !== "more") break;
+          round = short.map((item) => item.app);
         }
-        const goal =
-          app === "router"
-            ? "balanced"
-            : await ctx.ui.dialog.select({
-                title: "vSR calibrate: what matters more?",
-                options: [
-                  {
-                    value: "balanced" as const,
-                    title: "Balanced (recommended)",
-                    description: "as few wrong calls as possible either way",
-                  },
-                  {
-                    value: "fewer-false-alarms" as const,
-                    title: "Fewer false alarms",
-                    description: "step in only when sure; may miss some",
-                  },
-                  {
-                    value: "catch-more" as const,
-                    title: "Catch more",
-                    description: "step in on more borderline cases",
-                  },
-                ],
-              });
+        // One goal for every app but router, which has none.
+        const goal = apps.every((app) => app === "router")
+          ? "balanced"
+          : await ctx.ui.dialog.select({
+              title: "vSR calibrate: what matters more?",
+              options: [
+                {
+                  value: "balanced" as const,
+                  title: "Balanced (recommended)",
+                  description: "as few wrong calls as possible either way",
+                },
+                {
+                  value: "fewer-false-alarms" as const,
+                  title: "Fewer false alarms",
+                  description: "step in only when sure; may miss some",
+                },
+                {
+                  value: "catch-more" as const,
+                  title: "Catch more",
+                  description: "step in on more borderline cases",
+                },
+              ],
+            });
         if (!goal) return;
         // After a change of decision model, the known cases asked again first, as Claude Code's step 7 does.
         let probed = "";
         if (modelChanged(found)) {
-          const result = await probeNow([app]);
+          const result = await probeNow(apps);
           probed = result
             ? probeText(result)
             : `The decision model changed from ${found.calibratedModel} to ${found.model}, and the known cases got no answer.`;
           probed += "\n\n";
         }
-        const suggested = (await remote.calibrationSuggest(
-          { app, goal },
-          call(),
-        )) as CalibrationSuggestion;
-        if (!suggested.changed) {
-          await wide(
-            ctx.ui.dialog.alert({
-              title: `vSR calibrate: ${names[app]}`,
-              message: probed + suggestionText(suggested, goal),
-            }),
+        const suggested: CalibrationSuggestion[] = [];
+        for (const app of apps)
+          suggested.push(
+            (await remote.calibrationSuggest(
+              { app, goal },
+              call(),
+            )) as CalibrationSuggestion,
           );
+        const message = probed + suggestionsText(suggested, goal);
+        const heading = `vSR calibrate: ${listed(apps.map((app) => APP_WORDS[app][0]))}`;
+        const changed = suggested.filter((item) => item.changed);
+        if (!changed.length) {
+          await wide(ctx.ui.dialog.alert({ title: heading, message }));
           return;
         }
-        // The recommendation is marked on its button, as the Claude Code plugin marks it first.
+        // The recommendation comes first and is marked, as the Claude Code plugin's step 8 puts it.
         const recommended = (yes: boolean) => (yes ? " (recommended)" : "");
-        const apply = await wide(
-          ctx.ui.dialog.confirm({
-            title: `vSR calibrate: ${names[app]}`,
-            message: probed + suggestionText(suggested, goal),
-            label: {
-              confirm: `Apply${recommended(suggested.recommend === "apply")}`,
-              cancel: `Keep the current lines${recommended(suggested.recommend !== "apply")}`,
-            },
-          }),
-        );
-        if (!apply) return;
-        const done = (await remote.calibrationApply({ app, goal }, call())) as {
-          applied: boolean;
-        };
+        let apply: App[] | undefined;
+        if (apps.length === 1)
+          apply = (await wide(
+            ctx.ui.dialog.confirm({
+              title: heading,
+              message,
+              label: {
+                confirm: `Apply${recommended(suggested[0]!.recommend === "apply")}`,
+                cancel: `Keep the current lines${recommended(suggested[0]!.recommend !== "apply")}`,
+              },
+            }),
+          ))
+            ? apps
+            : undefined;
+        else {
+          const all = changed.map((item) => item.app);
+          const advised = changed
+            .filter((item) => item.recommend === "apply")
+            .map((item) => item.app);
+          const named = (list: App[]) =>
+            listed(list.map((app) => APP_WORDS[app][0]));
+          const keep = {
+            value: [] as App[],
+            title: `Keep the current lines${recommended(!advised.length)}`,
+          };
+          const everything = {
+            value: all,
+            title: `Apply all changes: ${named(all)}`,
+          };
+          apply = await wide(
+            ctx.ui.dialog.select<App[]>({
+              title: `${heading}\n\n${message}`,
+              options: advised.length
+                ? [
+                    {
+                      value: advised,
+                      title: `Apply the recommended: ${named(advised)} (recommended)`,
+                    },
+                    ...(all.length > advised.length ? [everything] : []),
+                    keep,
+                  ]
+                : [keep, everything],
+            }),
+          );
+        }
+        if (!apply?.length) return;
+        const applied: App[] = [];
+        for (const app of apply) {
+          const done = (await remote.calibrationApply(
+            { app, goal },
+            call(),
+          )) as { applied: boolean };
+          if (done.applied) applied.push(app);
+        }
         ctx.ui.toast.show({
-          message: done.applied
-            ? `vSR ${names[app]} calibrated.`
-            : `vSR ${names[app]}: nothing to change.`,
-          variant: done.applied ? "success" : "info",
+          message: applied.length
+            ? `vSR ${listed(applied.map((app) => APP_WORDS[app][0]))} calibrated.`
+            : "vSR: nothing to change.",
+          variant: applied.length ? "success" : "info",
         });
         await controller.refresh();
       } catch {

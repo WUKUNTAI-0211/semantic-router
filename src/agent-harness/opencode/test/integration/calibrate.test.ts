@@ -60,17 +60,21 @@ test(
       [
         { at: 12000, keys: "/vsr-calibrate" },
         { at: 12800, keys: "\r" },
-        { at: 14000, keys: "Shield" },
+        { at: 14000, keys: "Injection" },
         { at: 14600, keys: "\r" },
-        { at: 16000, keys: "\r" }, // Yes, it should have warned.
-        { at: 17500, keys: "\r" }, // And the next one, if any.
-        { at: 19000, keys: "\r" },
-        { at: 20500, keys: "\r" }, // Balanced.
+        { at: 16000, keys: "\r" }, // The report: continue.
+        { at: 17500, keys: "\r" }, // Yes, it should have warned.
+        { at: 19000, keys: "\r" }, // And the next one, if any.
+        { at: 20500, keys: "\r" },
+        { at: 22000, keys: "\r" }, // Balanced.
       ],
-      23,
+      25,
     );
     assert.ok(
       screen.text.includes("vSR calibrate: which app?") &&
+        // Claude Code's step 2: what the log holds, before any question.
+        screen.text.includes("vSR's log holds") &&
+        /files? or pages? read: the agent was warned about/.test(screen.text) &&
         screen.text.includes("Should vSR have warned the agent about") &&
         // The decision is shown in full under the question, not cut to one option line.
         screen.text.includes("it warned; score 0.99") &&
@@ -138,15 +142,16 @@ test(
       [
         { at: 12000, keys: "/vsr-calibrate" },
         { at: 12800, keys: "\r" },
-        { at: 14000, keys: "Shield" },
+        { at: 14000, keys: "Injection" },
         { at: 14600, keys: "\r" },
-        { at: 16000, keys: "\r" }, // Both questions of the first round.
-        { at: 17500, keys: "\r" },
-        { at: 19000, keys: "\r" }, // Answer more questions.
-        { at: 20500, keys: "\r" },
+        { at: 16000, keys: "\r" }, // The report: continue.
+        { at: 17500, keys: "\r" }, // Both questions of the first round.
+        { at: 19000, keys: "\r" },
+        { at: 20500, keys: "\r" }, // Answer more questions.
         { at: 22000, keys: "\r" },
+        { at: 23500, keys: "\r" },
       ],
-      25,
+      27,
     );
     assert.ok(
       screen.text.includes("vSR calibrate: 2 of 8 answers") &&
@@ -159,5 +164,52 @@ test(
       {},
     )) as CalibrationReport;
     assert.equal(after.apps.find((item) => item.app === "shield")!.answered, 4);
+  },
+);
+
+test(
+  "/vsr-calibrate tunes several apps at once, as Claude Code's does: pick them, one goal, one suggestion",
+  { timeout: 300000 },
+  async (t) => {
+    const native = await fixture(t);
+    const run = await native.run("OUTPUT_CASE READ");
+    const screen = await native.terminal(
+      run.sessionID,
+      [
+        { at: 12000, keys: "/vsr-calibrate" },
+        { at: 12800, keys: "\r" },
+        { at: 14000, keys: "Several" },
+        { at: 14600, keys: "\r" },
+        { at: 15800, keys: "\r" }, // Enter with nothing ticked stays.
+        { at: 16400, keys: " " }, // Space ticks the app under the cursor.
+        { at: 17000, keys: "\x1b[B" },
+        { at: 17600, keys: " " },
+        { at: 18200, keys: " " }, // And unticks it.
+        { at: 18800, keys: " " },
+        { at: 20000, keys: "\r" },
+        { at: 21500, keys: "\r" }, // The report: continue.
+        { at: 23000, keys: "\x1b" }, // No answers: straight to the goal.
+        { at: 24500, keys: "\r" }, // Balanced.
+      ],
+      28,
+    );
+    assert.ok(
+      screen.text.includes("vSR calibrate: which apps?") &&
+        screen.text.includes("Tick at least one app to go on.") &&
+        screen.text.includes("[✓] Injection warnings") &&
+        screen.text.includes(
+          "Enter  Continue with Personal data and Injection warnings",
+        ) &&
+        screen.text.includes(
+          "vSR calibrate: Personal data and Injection warnings",
+        ) &&
+        screen.text.includes("Overall: keep the current lines."),
+      screen.text.slice(-6000),
+    );
+    assert.equal(
+      (screen.last.match(/Aim: balanced/g) ?? []).length,
+      1,
+      "one goal for both",
+    );
   },
 );

@@ -305,6 +305,9 @@ export const Vsr = Rpc.define({
           // The decision model now, and the one the last calibration was made with: when they differ, probe.
           model: { type: "string" },
           calibratedModel: { type: "string" },
+          // When the oldest and newest logged decisions were made.
+          first: { type: "number" },
+          last: { type: "number" },
           apps: {
             type: "array",
             items: {
@@ -316,6 +319,16 @@ export const Vsr = Rpc.define({
                 answered: { type: "integer", minimum: 0 },
                 thresholds: numbers,
                 calibrated: { type: "boolean" },
+                acted: { type: "integer", minimum: 0 },
+                explicit: { type: "integer", minimum: 0 },
+                implied: { type: "integer", minimum: 0 },
+                // Router: light, medium, strong, then kept.
+                routes: {
+                  type: "array",
+                  items: { type: "integer", minimum: 0 },
+                  minItems: 4,
+                  maxItems: 4,
+                },
               },
               required: [
                 "app",
@@ -324,6 +337,9 @@ export const Vsr = Rpc.define({
                 "answered",
                 "thresholds",
                 "calibrated",
+                "acted",
+                "explicit",
+                "implied",
               ],
               additionalProperties: false,
             },

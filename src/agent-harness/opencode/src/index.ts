@@ -232,13 +232,39 @@ export default Plugin.define({
           ...calibrationState(),
           ...(model ? { model } : {}),
           ...(state.model ? { calibratedModel: state.model } : {}),
+          ...(lines.length
+            ? {
+                first: Math.min(...lines.map((line) => line.at)),
+                last: Math.max(...lines.map((line) => line.at)),
+              }
+            : {}),
           apps: APPS.map((app) => {
             const mine = lines.filter((line) => line.app === app);
+            const answered = mine.filter((line) => labels.has(line.id)).length;
+            const explicit = mine.filter((line) => line.label).length;
             return {
               app,
               enabled: settings.apps[app],
               decisions: mine.length,
-              answered: mine.filter((line) => labels.has(line.id)).length,
+              answered,
+              // The report's words, as the Claude Code plugin's: what vSR did, and whose answers these are.
+              acted: mine.filter(acted).length,
+              explicit,
+              implied: answered - explicit,
+              ...(app === "router"
+                ? {
+                    routes: (
+                      ["light", "medium", "strong", "kept"] as const
+                    ).map(
+                      (_, tier) =>
+                        mine.filter((line) =>
+                          tier === 3
+                            ? line.outcome !== "routed"
+                            : line.outcome === "routed" && line.tier === tier,
+                        ).length,
+                    ),
+                  }
+                : {}),
               thresholds: thresholds[app],
               calibrated: state.apps.includes(app),
             };

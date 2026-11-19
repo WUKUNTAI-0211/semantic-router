@@ -660,6 +660,39 @@ export function suggestionText(
   );
   return out.join("\n");
 }
+// Several apps' suggestions at once, as plain.py's `suggestion`: the aim once, each app under its name, then which to
+// apply overall.
+export function suggestionsText(
+  found: readonly CalibrationSuggestion[],
+  goal?: keyof typeof GOAL_WORDS,
+): string {
+  if (found.length === 1) return suggestionText(found[0]!, goal);
+  const out: string[] = [];
+  if (goal && found.some((item) => item.app !== "router"))
+    out.push(`Aim: ${GOAL_WORDS[goal]}.`, "");
+  for (const item of found)
+    out.push(
+      appTitle(item.app),
+      ...suggestionText(item)
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => `  ${line}`),
+      "",
+    );
+  const apply = found
+    .filter((item) => item.recommend === "apply")
+    .map((item) => APP_WORDS[item.app][0]);
+  out.push(
+    apply.length
+      ? `Overall: apply the changes for ${listed(apply)}; keep the rest.`
+      : "Overall: keep the current lines.",
+  );
+  return out.join("\n");
+}
+export const listed = (names: readonly string[]) =>
+  names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 export interface CalibrationReport {
   persistence: "durable" | "unavailable";
   at?: number;
@@ -667,14 +700,127 @@ export interface CalibrationReport {
   remind: boolean;
   model?: string;
   calibratedModel?: string;
+  first?: number;
+  last?: number;
   apps: {
     app: keyof typeof APP_NAMES;
     enabled: boolean;
     decisions: number;
     answered: number;
+    acted: number;
+    explicit: number;
+    implied: number;
+    routes?: number[];
     thresholds: number[];
     calibrated: boolean;
   }[];
+}
+// Each app's plain name and what it does, as the Claude Code plugin's plain.py APP_WORDS, with the agent for Claude.
+export const APP_WORDS: Record<keyof typeof APP_NAMES, [string, string]> = {
+  router: ["Routing", "which model each subagent gets"],
+  guard: ["Risky commands", "asks you before a risky command runs"],
+  redact: ["Personal data", "hides personal data from the agent"],
+  shield: [
+    "Injection warnings",
+    "warns the agent when a file or page tries to instruct it",
+  ],
+  escalate: [
+    "Pushback",
+    "sends the next subagent a tier up when you push back",
+  ],
+  check: ["Answer checks", "marks answers that claim more than the agent read"],
+};
+export const appTitle = (app: keyof typeof APP_NAMES) =>
+  `${APP_WORDS[app][0]} (${APP_WORDS[app][1]})`;
+// What the log shows for an app: {n} decisions, {acted} acted, {other} not. Unlike the Claude Code plugin's, this log
+// keeps what redact and shield let through as well.
+const LOGGED: Record<
+  Exclude<keyof typeof APP_NAMES, "router">,
+  [string, string, string]
+> = {
+  guard: ["command", "commands", ": {acted} held for you, {other} allowed."],
+  escalate: [
+    "message",
+    "messages",
+    " taken as pushback on the last answer (vSR logs only these).",
+  ],
+  redact: [
+    "text read",
+    "texts read",
+    ": {acted} with personal data hidden, {other} left as they were.",
+  ],
+  shield: [
+    "file or page read",
+    "files or pages read",
+    ": the agent was warned about {acted}, {other} passed.",
+  ],
+  check: [
+    "answer checked",
+    "answers checked",
+    ": {acted} marked unverified, {other} passed.",
+  ],
+};
+// Which answers the log implies for an app, as the person gave them.
+const IMPLIED_BY: Partial<Record<keyof typeof APP_NAMES, string>> = {
+  router: "your pushback implies",
+  guard: "your declines imply",
+};
+const day = (at: number) => {
+  const date = new Date(at);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+// The log in plain words for the chosen apps, as the Claude Code plugin's `report`: what it holds, the decision model
+// now and at the last calibration, and per app what vSR did and how many answers there are.
+export function calibrationReportText(
+  found: CalibrationReport,
+  apps: readonly (keyof typeof APP_NAMES)[],
+): string {
+  const total = found.apps.reduce((sum, item) => sum + item.decisions, 0);
+  const out = [
+    `vSR's log holds ${plural(total, "decision")}${found.first === undefined || found.last === undefined ? "" : ` from ${day(found.first)} to ${day(found.last)}`}.`,
+    `Decision model now: ${found.model ?? "unreachable"}; ` +
+      (found.at === undefined
+        ? "not calibrated before."
+        : `last calibrated ${day(found.at)}${found.calibratedModel ? ` with ${found.calibratedModel}` : ""}.`),
+  ];
+  for (const app of apps) {
+    const item = found.apps.find((entry) => entry.app === app)!;
+    const head =
+      appTitle(app) + (item.enabled ? "" : " — off in your settings");
+    if (!item.decisions) {
+      out.push("", head, "  No decisions logged yet.");
+      continue;
+    }
+    const routes = item.routes ?? [0, 0, 0, 0];
+    const logged =
+      app === "router"
+        ? `${plural(item.decisions, "subagent")}: ${routes[0]} went to the light model, ${routes[1]} to medium, ${routes[2]} to strong, ${routes[3]} kept ${KEPT}.`
+        : plural(item.decisions, LOGGED[app][0], LOGGED[app][1]) +
+          LOGGED[app][2]
+            .replace("{acted}", String(item.acted))
+            .replace("{other}", String(item.decisions - item.acted));
+    const implied = item.implied
+      ? ` (+${item.implied} ${IMPLIED_BY[app] ?? "the log implies"})`
+      : "";
+    out.push(
+      "",
+      head,
+      `  ${logged} You answered ${item.explicit}${implied}; ${MIN_LABELS} are needed to tune.`,
+    );
+  }
+  // Claude Code's step 3 says this once, when router or guard is chosen.
+  const counted = [
+    apps.includes("guard") &&
+      'a held command you declined counts as "should ask"',
+    apps.includes("router") &&
+      'pushback within 15 minutes of a light or medium route counts as "needed stronger"',
+  ].filter(Boolean);
+  if (counted.length)
+    out.push(
+      "",
+      `The log already counts some answers for you: ${counted.join(", and ")}.`,
+    );
+  return out.join("\n");
 }
 export interface ProbeResult {
   model?: string;

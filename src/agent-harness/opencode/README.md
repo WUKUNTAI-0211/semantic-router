@@ -263,24 +263,32 @@ vSR keeps the newest 5,000 decisions it can learn from, across sessions and
 restarts, in OpenCode's plugin storage: each with its subject, the scores it
 held against its thresholds and the thresholds in use then. A rule's
 decision, a skipped or withheld one, and a route outside your tiers are not
-kept. Run `/vsr-calibrate` and pick an app:
+kept. Run `/vsr-calibrate` and pick an app, or choose **Several apps at once**
+and tick the ones to tune together, as the Claude Code plugin's
+`/vsr:calibrate` does:
 
-1. It asks about the unanswered decisions nearest the app's line, two on each
+1. It says what the log holds for those apps: how many decisions and from when,
+   the decision model now and at your last calibration, and per app what vSR
+   did and how many answers you gave. The apps go by their plain names, such
+   as Risky commands for guard and Injection warnings for shield.
+2. It asks about the unanswered decisions nearest the app's line, two on each
    side: "Should vSR have asked you before this command ran?" with what vSR did
    and how near the line it was; for router, whether the routed model was too
    weak, right or stronger than needed. Skip any you are unsure of, or stop.
    While the app has fewer than 8 answers and more are left to ask, it offers
    another round.
-2. For apps other than router, pick what matters more: balanced, fewer false
-   alarms or catch more.
-3. When the decision model is not the one you last calibrated with, it asks
+3. For apps other than router, pick what matters more: balanced, fewer false
+   alarms or catch more. Several apps share one goal.
+4. When the decision model is not the one you last calibrated with, it asks
    that model the app's known cases first (the probe below) and says which of
    them it now decides the other way or scores differently.
-4. It says, in plain words, what each line does and where it would move, what
+5. It says, in plain words, what each line does and where it would move, what
    the change would do on your own log (for example "vSR would hold 5 of these
    40 commands for you instead of 1"), how many of your answers the current and
    the new lines agree with, and whether to apply. The recommended button is
-   marked; apply, or keep the current ones.
+   marked; apply, or keep the current ones. For several apps it says this per
+   app, then which to apply overall: apply the recommended ones, apply every
+   change, or keep the current lines.
 
 Some answers come without asking: one you gave in the panel, a held command you
 declined (it should have asked), and pushback within 15 minutes of a route to
