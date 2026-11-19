@@ -264,14 +264,19 @@ held against its thresholds and the thresholds in use then. A rule's
 decision, a skipped or withheld one, and a route outside your tiers are not
 kept. Run `/vsr-calibrate` and pick an app:
 
-1. It asks about the unanswered decisions nearest the app's line, on both sides:
-   "Should vSR have asked you before this command ran?" with what vSR did and
-   how near the line it was; for router, whether the routed model was too weak,
-   right or stronger than needed. Skip any you are unsure of, or stop.
+1. It asks about the unanswered decisions nearest the app's line, two on each
+   side: "Should vSR have asked you before this command ran?" with what vSR did
+   and how near the line it was; for router, whether the routed model was too
+   weak, right or stronger than needed. Skip any you are unsure of, or stop.
+   While the app has fewer than 8 answers and more are left to ask, it offers
+   another round.
 2. For apps other than router, pick what matters more: balanced, fewer false
    alarms or catch more.
-3. It shows the new lines, and how many of your answers the current and the new
-   ones agree with. Apply, or keep the current ones.
+3. It says, in plain words, what each line does and where it would move, what
+   the change would do on your own log (for example "vSR would hold 5 of these
+   40 commands for you instead of 1"), how many of your answers the current and
+   the new lines agree with, and whether to apply. The recommended button is
+   marked; apply, or keep the current ones.
 
 Some answers come without asking: one you gave in the panel, a held command you
 declined (it should have asked), and pushback within 15 minutes of a route to
@@ -283,7 +288,8 @@ escalates, so its lines only rise.
 Calibrated thresholds apply at once and after a restart. Changing a threshold
 in the options drops the calibration in favor of what you set. The panel's
 Calibration line says when you last calibrated and how many decisions came
-since, and suggests `/vsr-calibrate` after 300.
+since, and suggests `/vsr-calibrate` after `calibrateEvery` of them (200 by
+default).
 
 ## A Router listener's switches and rules
 
@@ -359,6 +365,7 @@ Every option is optional. An unknown option is an error, not ignored.
 | `shield.injectionThreshold`                            | `0.9`                                | The score that marks an output as instructions                                 |
 | `check.unsupportedThreshold`, `check.deadlineMs`       | `0.5`, `1500`                        | The score that marks an answer unverified, and check's wait (at most 10000)    |
 | `maxDecisions`, `maxSessions`                          | `500`, `64`                          | How many decisions per session, and sessions, the panel keeps                  |
+| `calibrateEvery`                                       | `200`                                | Decisions since the last calibration before the panel suggests one; `0` is off |
 
 Tokens, URL query tokens and passwords in a URL are refused as options; use
 `/connect` or `runtimeTokenEnv`. vSR does not follow a runtime's redirects, so a

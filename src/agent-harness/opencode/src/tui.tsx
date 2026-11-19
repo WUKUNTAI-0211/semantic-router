@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin/tui";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { RGBA, ScrollBoxRenderable } from "@opentui/core";
+import { MIN_LABELS } from "./calibration.ts";
 import { Vsr } from "./rpc.ts";
 import { APPS } from "./settings.ts";
 import type { App, Wait } from "./settings.ts";
@@ -185,25 +186,56 @@ export default Plugin.define({
             });
           return;
         }
-        const questions = (await remote.calibrationSample(
-          { app },
-          call(),
-        )) as CalibrationQuestion[];
-        for (const question of questions) {
-          const asked = calibrationQuestion(question);
-          const answer = await ctx.ui.dialog.select({
-            title: asked.title,
-            options: asked.options.map((option) => ({
-              ...option,
-              description: asked.description,
-            })),
+        // Rounds of a few questions, as Claude Code's step 4 does: while the app is short of MIN_LABELS answers and
+        // something is left to ask, offer another round.
+        const asked = new Set<string>();
+        rounds: for (;;) {
+          const questions = (await remote.calibrationSample(
+            { app, skip: [...asked] },
+            call(),
+          )) as CalibrationQuestion[];
+          for (const question of questions) {
+            asked.add(question.id);
+            const shown = calibrationQuestion(question);
+            const answer = await ctx.ui.dialog.select({
+              title: shown.title,
+              options: shown.options.map((option) => ({
+                ...option,
+                description: shown.description,
+              })),
+            });
+            if (!answer || answer === "stop") break rounds;
+            if (answer !== "skip")
+              await remote.calibrationLabel(
+                { id: question.id, label: answer },
+                call(),
+              );
+          }
+          const answered = (
+            (await remote.calibrationReport({}, call())) as CalibrationReport
+          ).apps.find((item) => item.app === app)!.answered;
+          if (answered >= MIN_LABELS) break;
+          const left = (await remote.calibrationSample(
+            { app, skip: [...asked] },
+            call(),
+          )) as CalibrationQuestion[];
+          if (!left.length) break;
+          const more = await ctx.ui.dialog.select({
+            title: `vSR calibrate: ${answered} of ${MIN_LABELS} answers`,
+            options: [
+              {
+                value: "more" as const,
+                title: "Answer more questions",
+                description: `${MIN_LABELS} answers are needed before a line can move`,
+              },
+              {
+                value: "stop" as const,
+                title: "Stop here",
+                description: "see where the lines stand now",
+              },
+            ],
           });
-          if (!answer || answer === "stop") break;
-          if (answer !== "skip")
-            await remote.calibrationLabel(
-              { id: question.id, label: answer },
-              call(),
-            );
+          if (more !== "more") break;
         }
         const goal =
           app === "router"
@@ -236,14 +268,19 @@ export default Plugin.define({
         if (!suggested.changed) {
           await ctx.ui.dialog.alert({
             title: `vSR calibrate: ${names[app]}`,
-            message: suggestionText(suggested),
+            message: suggestionText(suggested, goal),
           });
           return;
         }
+        // The recommendation is marked on its button, as the Claude Code plugin marks it first.
+        const recommended = (yes: boolean) => (yes ? " (recommended)" : "");
         const apply = await ctx.ui.dialog.confirm({
           title: `vSR calibrate: ${names[app]}`,
-          message: suggestionText(suggested),
-          label: { confirm: "Apply", cancel: "Keep the current lines" },
+          message: suggestionText(suggested, goal),
+          label: {
+            confirm: `Apply${recommended(suggested.recommend === "apply")}`,
+            cancel: `Keep the current lines${recommended(suggested.recommend !== "apply")}`,
+          },
         });
         if (!apply) return;
         const done = (await remote.calibrationApply({ app, goal }, call())) as {

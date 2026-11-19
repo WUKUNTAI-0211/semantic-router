@@ -136,16 +136,20 @@ export function labelsOf(lines: readonly LogLine[]): Map<string, Label> {
   return labels;
 }
 
-// The unlabeled decisions nearest each line, `perSide` on each side: the answers that move a line most.
+// The unlabeled decisions nearest each line, `perSide` on each side: the answers that move a line most. `skip` holds
+// the ones already asked this run, so a skipped question does not come back in the next round.
 export function sample(
   lines: readonly LogLine[],
   app: App,
   thresholds: readonly number[],
-  perSide = 4,
+  perSide = 2,
+  skip: ReadonlySet<string> = new Set(),
 ): LogLine[] {
   const labels = labelsOf(lines);
   const scored = lines
-    .filter((line) => line.app === app && !labels.has(line.id))
+    .filter(
+      (line) => line.app === app && !labels.has(line.id) && !skip.has(line.id),
+    )
     .flatMap((line) => {
       if (app === "router") {
         if (line.level === undefined) return [];
@@ -191,6 +195,21 @@ export interface Suggestion {
   // Router: labeled tasks under the confidence floor, which keep their model whatever the cuts.
   unrouted?: number;
   why: string;
+  // The app's logged decisions, and what the new lines would do to them: how many a binary app would act on, or
+  // where the router would now send its subagents.
+  decisions: number;
+  acted?: { before: number; after: number };
+  moves?: { from: Route; to: Route; n: number }[];
+  // Apply when the change agrees with more answers; more when there are too few to fit.
+  recommend: "apply" | "keep" | "more";
+}
+export type Route = "light" | "medium" | "strong" | "kept";
+const ROUTES: readonly Route[] = ["light", "medium", "strong", "kept"];
+// Where router lines send a logged subagent, or undefined when it has no level.
+function routeOf(line: LogLine, [easy, hard, least]: readonly number[]) {
+  if (line.level === undefined) return undefined;
+  if ((line.confidence ?? 1) < least!) return "kept" as const;
+  return ROUTES[routeTier(line.level, easy!, hard!)]!;
 }
 
 function binaryCases(
@@ -246,13 +265,60 @@ function routerAgreement(
   };
 }
 
-// New thresholds for one app from the log's labels, each moved at most MAX_STEP; `currents` are the ones in use.
+// New thresholds for one app from the log's labels, each moved at most MAX_STEP; `currents` are the ones in use. Says
+// what they would do to the app's logged decisions and whether to apply them, as the Claude Code plugin's plan does.
 export function suggest(
   lines: readonly LogLine[],
   app: App,
   currents: readonly number[],
   goal: Goal = "balanced",
 ): Suggestion {
+  const found = fit(lines, app, currents, goal);
+  const mine = lines.filter((line) => line.app === app);
+  const recommend =
+    found.labels < MIN_LABELS
+      ? ("more" as const)
+      : found.changed && found.agreeAfter.agree > found.agreeBefore.agree
+        ? ("apply" as const)
+        : ("keep" as const);
+  if (app === "router") {
+    const moves = new Map<string, { from: Route; to: Route; n: number }>();
+    for (const line of mine) {
+      const from = routeOf(line, found.before),
+        to = routeOf(line, found.after);
+      if (!from || !to || from === to) continue;
+      const move = moves.get(`${from}>${to}`) ?? { from, to, n: 0 };
+      move.n++;
+      moves.set(`${from}>${to}`, move);
+    }
+    return {
+      ...found,
+      decisions: mine.length,
+      moves: [...moves.values()].sort(
+        (a, b) =>
+          ROUTES.indexOf(a.from) - ROUTES.indexOf(b.from) ||
+          ROUTES.indexOf(a.to) - ROUTES.indexOf(b.to),
+      ),
+      recommend,
+    };
+  }
+  const scored = mine.filter((line) => line.scores);
+  const actedOn = (thresholds: readonly number[]) =>
+    scored.filter((line) => acts(line.scores!, thresholds)).length;
+  return {
+    ...found,
+    decisions: scored.length,
+    acted: { before: actedOn(found.before), after: actedOn(found.after) },
+    recommend,
+  };
+}
+type Fit = Omit<Suggestion, "decisions" | "acted" | "moves" | "recommend">;
+function fit(
+  lines: readonly LogLine[],
+  app: App,
+  currents: readonly number[],
+  goal: Goal,
+): Fit {
   const labels = labelsOf(lines);
   const before = [...currents];
   if (app === "router") {

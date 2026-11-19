@@ -108,6 +108,30 @@ const suggestion = {
     agreeAfter: agreement,
     unrouted: { type: "integer", minimum: 0 },
     why: { type: "string" },
+    decisions: { type: "integer", minimum: 0 },
+    acted: {
+      type: "object",
+      properties: {
+        before: { type: "integer", minimum: 0 },
+        after: { type: "integer", minimum: 0 },
+      },
+      required: ["before", "after"],
+      additionalProperties: false,
+    },
+    moves: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          from: { enum: ["light", "medium", "strong", "kept"] },
+          to: { enum: ["light", "medium", "strong", "kept"] },
+          n: { type: "integer", minimum: 1 },
+        },
+        required: ["from", "to", "n"],
+        additionalProperties: false,
+      },
+    },
+    recommend: { enum: ["apply", "keep", "more"] },
   },
   required: [
     "app",
@@ -118,6 +142,8 @@ const suggestion = {
     "agreeBefore",
     "agreeAfter",
     "why",
+    "decisions",
+    "recommend",
   ],
   additionalProperties: false,
 } as const;
@@ -304,7 +330,10 @@ export const Vsr = Rpc.define({
     calibrationSample: {
       input: {
         type: "object",
-        properties: { app },
+        properties: {
+          app,
+          skip: { type: "array", items: { type: "string" }, maxItems: 1000 },
+        },
         required: ["app"],
         additionalProperties: false,
       },

@@ -9,6 +9,8 @@ test("defaults are independent and Check remains off", () => {
   assert.equal(two.apps.guard, true);
   assert.equal(two.apps.check, false);
   assert.equal(two.runtimeUrl, "http://127.0.0.1:8790/v1/decisions");
+  assert.equal(two.calibrateEvery, 200);
+  assert.equal(parseSettings({ calibrateEvery: 0 }).calibrateEvery, 0);
 });
 
 test("invalid controls, unbounded retention and embedded credentials are rejected", () => {
@@ -22,6 +24,8 @@ test("invalid controls, unbounded retention and embedded credentials are rejecte
     { waits: { unknown: "done" } },
     { maxDecisions: Infinity },
     { maxSessions: 0 },
+    { calibrateEvery: -1 },
+    { calibrateEvery: 2.5 },
     { runtimeTokenEnv: "BAD-NAME" },
     { runtimeUrl: "https://user:secret@example.test/v1/decisions" },
     { runtimeUrl: "https://example.test/v1/decisions?token=secret" },

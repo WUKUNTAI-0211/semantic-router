@@ -17,7 +17,7 @@ import { DecisionLog, acted } from "./log.ts";
 import type { Label } from "./log.ts";
 import { labelsOf, sample, suggest } from "./calibration.ts";
 import type { Goal } from "./calibration.ts";
-import { Calibrated, REMIND_EVERY, thresholdsOf } from "./calibrated.ts";
+import { Calibrated, thresholdsOf } from "./calibrated.ts";
 import {
   INTEGRATION,
   KEY_METHOD,
@@ -153,7 +153,7 @@ export default Plugin.define({
       return {
         ...(at === undefined ? {} : { at }),
         since,
-        remind: since >= REMIND_EVERY,
+        remind: settings.calibrateEvery > 0 && since >= settings.calibrateEvery,
       };
     };
     const appOf = (input: unknown): App => {
@@ -237,18 +237,22 @@ export default Plugin.define({
       },
       calibrationSample: async (input) => {
         const app = appOf(input);
-        return sample(log.all(), app, thresholdsOf(settings)[app]).map(
-          (line) => ({
-            id: line.id,
-            app: line.app,
-            subject: line.subject,
-            acted: acted(line),
-            ...(line.scores ? { scores: line.scores } : {}),
-            ...(line.level === undefined ? {} : { level: line.level }),
-            ...(line.tier === undefined ? {} : { tier: line.tier }),
-            thresholds: thresholdsOf(settings)[app],
-          }),
-        );
+        return sample(
+          log.all(),
+          app,
+          thresholdsOf(settings)[app],
+          undefined,
+          new Set((input as { skip?: string[] }).skip ?? []),
+        ).map((line) => ({
+          id: line.id,
+          app: line.app,
+          subject: line.subject,
+          acted: acted(line),
+          ...(line.scores ? { scores: line.scores } : {}),
+          ...(line.level === undefined ? {} : { level: line.level }),
+          ...(line.tier === undefined ? {} : { tier: line.tier }),
+          thresholds: thresholdsOf(settings)[app],
+        }));
       },
       calibrationLabel: async (input) => {
         if (

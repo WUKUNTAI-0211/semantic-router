@@ -23,6 +23,8 @@ export interface Settings {
   waits: { redact: Wait; shield: Wait; guard: Wait };
   maxDecisions: number;
   maxSessions: number;
+  // After this many decisions since the last calibration the decision view suggests one; 0 turns that off.
+  calibrateEvery: number;
 }
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -88,6 +90,7 @@ export function parseSettings(input: unknown): Settings {
     "waits",
     "maxDecisions",
     "maxSessions",
+    "calibrateEvery",
     "routing",
     "guard",
     "redact",
@@ -179,6 +182,15 @@ export function parseSettings(input: unknown): Settings {
     deadlineMs > 10000
   )
     throw new Error("Invalid check deadlineMs");
+  const calibrateEvery =
+    options.calibrateEvery === undefined ? 200 : options.calibrateEvery;
+  if (
+    typeof calibrateEvery !== "number" ||
+    !Number.isInteger(calibrateEvery) ||
+    calibrateEvery < 0 ||
+    calibrateEvery > 100_000
+  )
+    throw new Error("Invalid calibrateEvery");
   return {
     check: { unsupportedThreshold, deadlineMs },
     guard: { reviewThreshold },
@@ -198,5 +210,6 @@ export function parseSettings(input: unknown): Settings {
     },
     maxDecisions: limit(options.maxDecisions, 500, 5000, "maxDecisions"),
     maxSessions: limit(options.maxSessions, 64, 512, "maxSessions"),
+    calibrateEvery,
   };
 }

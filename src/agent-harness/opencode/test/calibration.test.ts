@@ -253,6 +253,18 @@ test("questions go to the unanswered decisions nearest the line, on both sides",
     (item) => item.scores![0],
   );
   assert.deepEqual(picked, [0.92, 0.99, 0.85, 0.5]);
+  const next = sample(
+    lines,
+    "guard",
+    [0.9],
+    2,
+    new Set([lines[2]!.id, lines[4]!.id]),
+  ).map((item) => item.scores![0]);
+  assert.deepEqual(
+    next,
+    [0.99, 0.5, 0.1],
+    "a skipped question is not asked again this run",
+  );
 });
 
 test("a fit needs 8 answers, moves each line at most 0.15 and escalate only rises", () => {
@@ -417,16 +429,56 @@ test("questions and suggestions read in plain words", () => {
     thresholds: [0.65, 1.5, 0.5],
   });
   assert.match(routed.title, /the light model/);
-  const text = suggestionText({
-    app: "guard",
-    labels: 8,
-    before: [0.9],
-    after: [0.75],
-    changed: true,
-    agreeBefore: { agree: 4, total: 8 },
-    agreeAfter: { agree: 8, total: 8 },
-    why: "the best separation of your answers",
-  });
-  assert.match(text, /review line: 0\.90 → 0\.75/);
-  assert.match(text, /Agrees with 4 of 8 answers now, 8 of 8 after\./);
+});
+
+test("a suggestion says what each line does, what it would do on the log, and what to do, as Claude Code's does", () => {
+  const guard = (score: number, label?: "yes" | "no") =>
+    line("guard", { scores: [score], ...(label ? { label } : {}) });
+  const lines = [
+    ...[0.76, 0.8, 0.82, 0.85].map((score) => guard(score, "yes")),
+    ...[0.1, 0.2, 0.3, 0.35].map((score) => guard(score, "no")),
+    guard(0.95),
+    guard(0.05),
+  ];
+  const found = suggest(lines, "guard", [0.9]);
+  assert.equal(found.decisions, 10);
+  assert.deepEqual(found.acted, { before: 1, after: 5 });
+  assert.equal(found.recommend, "apply");
+  const text = suggestionText(found, "balanced");
+  assert.match(text, /^Aim: balanced: as few wrong calls/);
+  assert.match(
+    text,
+    /Review line 0\.90 → 0\.76: vSR asks you before a command it rates at least this risky\./,
+  );
+  assert.match(
+    text,
+    /On your log: vSR would hold 5 of these 10 commands for you instead of 1\./,
+  );
+  assert.match(
+    text,
+    /Your answers: 4 of 8 agree with vSR now, 8 of 8 would after\./,
+  );
+  assert.match(text, /Recommended: apply$/);
+
+  const few = suggest(lines.slice(0, 7), "guard", [0.9]);
+  assert.equal(few.recommend, "more");
+  assert.match(
+    suggestionText(few),
+    /Review line stays 0\.90: [^\n]+\n\nNot enough answers yet: 7 of 8 \(answer more in \/vsr or here\)\.$/,
+  );
+
+  // The router says where its logged subagents would go.
+  const route = (level: number, tier: number, label: "too-low" | "right") =>
+    line("router", { outcome: "routed", level, tier, confidence: 0.9, label });
+  const routes = [
+    ...[0.55, 0.58, 0.6, 0.62].map((level) => route(level, 0, "too-low")),
+    ...[0.1, 0.2, 0.3, 0.4].map((level) => route(level, 0, "right")),
+  ];
+  const routed = suggest(routes, "router", [0.65, 1.5, 0.5]);
+  assert.equal(routed.recommend, "apply");
+  assert.deepEqual(routed.moves, [{ from: "light", to: "medium", n: 4 }]);
+  assert.match(
+    suggestionText(routed, "balanced"),
+    /^Light line 0\.65 → 0\.\d\d: [^\n]+\n[^\n]+\n[^\n]+\n\nOn your log: 4 tasks that went to the light model would go to the medium model\./,
+  );
 });

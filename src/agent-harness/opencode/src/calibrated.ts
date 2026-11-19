@@ -2,9 +2,6 @@ import { APPS, isRecord } from "./settings.ts";
 import type { App, Settings } from "./settings.ts";
 
 export type Thresholds = Record<App, number[]>;
-// After this many decisions since the last calibration, the decision view suggests another.
-export const REMIND_EVERY = 300;
-
 // The thresholds each app holds its scores against, in the order its log lines keep them.
 export function thresholdsOf(settings: Settings): Thresholds {
   return {

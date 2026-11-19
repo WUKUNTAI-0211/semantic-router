@@ -1,5 +1,6 @@
 import type { Snapshot, Feedback, Decision } from "./decisions.ts";
 import { isRecord } from "./settings.ts";
+import { MIN_LABELS } from "./calibration.ts";
 import type { Settings } from "./settings.ts";
 import type { RuntimeStatus } from "./runtime.ts";
 import type { ControlResult } from "./controls.ts";
@@ -505,6 +506,7 @@ export function calibrationQuestion(question: CalibrationQuestion): {
     ],
   };
 }
+export type Route = "light" | "medium" | "strong" | "kept";
 export interface CalibrationSuggestion {
   app: keyof typeof APP_NAMES;
   labels: number;
@@ -515,31 +517,147 @@ export interface CalibrationSuggestion {
   agreeAfter: { agree: number; total: number };
   unrouted?: number;
   why: string;
+  decisions: number;
+  acted?: { before: number; after: number };
+  moves?: { from: Route; to: Route; n: number }[];
+  recommend: "apply" | "keep" | "more";
 }
-const LINE_NAMES: Record<keyof typeof APP_NAMES, string[]> = {
-  router: ["light below", "strong from", "confidence floor"],
-  escalate: ["pushback line", "repeat line"],
-  redact: ["personal-data line"],
-  shield: ["instruction line"],
-  guard: ["review line"],
-  check: ["unsupported line"],
+// Each line's name and what it does, in the Claude Code plugin's words with the agent and OpenCode's tiers.
+const LINES: Record<keyof typeof APP_NAMES, [string, string][]> = {
+  router: [
+    ["Light line", "tasks judged easier than this go to the light model."],
+    [
+      "Strong line",
+      "tasks judged at least this hard go to the strong model; those between the two lines go to the medium one.",
+    ],
+    [
+      "Confidence line",
+      "vSR changes a subagent's model only when it is at least this sure.",
+    ],
+  ],
+  escalate: [
+    [
+      "Pushback line",
+      "when your message reads at least this much like pushback on the last answer, the agent re-checks and the next subagent goes one step up.",
+    ],
+    [
+      "Repeat line",
+      "when you ask for the same thing again at least this clearly, vSR does the same.",
+    ],
+  ],
+  redact: [
+    [
+      "Hiding line",
+      "vSR hides text it is at least this sure is personal data (secrets are always hidden).",
+    ],
+  ],
+  shield: [
+    [
+      "Warning line",
+      "vSR warns the agent about a file or page at least this likely to be trying to instruct it.",
+    ],
+  ],
+  guard: [
+    [
+      "Review line",
+      "vSR asks you before a command it rates at least this risky.",
+    ],
+  ],
+  check: [
+    [
+      "Check line",
+      "vSR marks an answer unverified when it is at least this sure the answer claims things the agent did not read.",
+    ],
+  ],
 };
-// What the fit would change, and how many of the person's answers each setting agrees with.
-export function suggestionText(found: CalibrationSuggestion): string {
-  const lines = LINE_NAMES[found.app].map(
-    (name, i) =>
-      `${name}: ${two(found.before[i]!)}${found.after[i] === found.before[i] ? " (kept)" : ` → ${two(found.after[i]!)}`}`,
+// What the new lines would do on the person's log, for an app that acts or not.
+const EFFECT: Record<Exclude<keyof typeof APP_NAMES, "router">, string> = {
+  guard: "vSR would hold {after} of these {n} commands for you{was}.",
+  escalate: "vSR would escalate {after} of these {n} messages{was}.",
+  redact: "vSR would hide data in {after} of these {n} outputs{was}.",
+  shield: "vSR would warn the agent about {after} of these {n} outputs{was}.",
+  check: "vSR would mark {after} of these {n} answers unverified{was}.",
+};
+export const GOAL_WORDS = {
+  balanced: "balanced: as few wrong calls as possible either way",
+  "fewer-false-alarms":
+    "fewer false alarms: act only when sure, even if some cases slip by",
+  "catch-more":
+    "catch more: act on more borderline cases, even with some false alarms",
+} as const;
+const KEPT = "its own model";
+const routeName = (route: Route) =>
+  route === "kept" ? KEPT : `the ${route} model`;
+const plural = (n: number, one: string, many = `${one}s`) =>
+  `${n} ${n === 1 ? one : many}`;
+// What new router lines would do to the logged subagents, in words.
+function routerMoves(moves: NonNullable<CalibrationSuggestion["moves"]>) {
+  const phrases = moves
+    .filter((move) => move.from !== "kept")
+    .map(
+      (move) =>
+        `${plural(move.n, "task")} that went to ${routeName(move.from)} would ${move.to === "kept" ? `keep ${KEPT}` : `go to ${routeName(move.to)}`}`,
+    );
+  const routed = moves.filter((move) => move.from === "kept");
+  if (routed.length)
+    phrases.push(
+      `${plural(
+        routed.reduce((sum, move) => sum + move.n, 0),
+        "subagent",
+      )} kept on ${KEPT} would be routed (${routed.map((move) => `${move.n} to ${routeName(move.to)}`).join(", ")})`,
+    );
+  if (!phrases.length)
+    return "No subagent in your log would get a different model.";
+  const text = phrases.join("; ") + ".";
+  return text[0]!.toUpperCase() + text.slice(1);
+}
+// What a calibration would change, in plain words as the Claude Code plugin prints it: each line and what it does,
+// what the change would do on the person's own log, how many answers agree, and a recommendation.
+export function suggestionText(
+  found: CalibrationSuggestion,
+  goal?: keyof typeof GOAL_WORDS,
+): string {
+  const out: string[] = [];
+  if (goal && found.app !== "router") out.push(`Aim: ${GOAL_WORDS[goal]}.`, "");
+  LINES[found.app].forEach(([name, does], i) => {
+    const was = found.before[i]!,
+      now = found.after[i]!;
+    out.push(
+      `${name} ${Math.abs(now - was) > 1e-9 ? `${two(was)} → ${two(now)}` : `stays ${two(was)}`}: ${does}`,
+    );
+  });
+  if (found.recommend !== "more") {
+    const effect =
+      found.app === "router"
+        ? routerMoves(found.moves ?? [])
+        : EFFECT[found.app]
+            .replace("{after}", String(found.acted?.after ?? 0))
+            .replace("{n}", String(found.decisions))
+            .replace(
+              "{was}",
+              found.acted && found.acted.before !== found.acted.after
+                ? ` instead of ${found.acted.before}`
+                : " (the same as now)",
+            );
+    out.push(
+      "",
+      `On your log: ${effect}`,
+      `Your answers: ${found.agreeBefore.agree} of ${found.agreeBefore.total} agree with vSR now, ${found.agreeAfter.agree} of ${found.agreeAfter.total} would after.`,
+    );
+    if (found.unrouted)
+      out.push(
+        `${plural(found.unrouted, "answered task")} under the confidence line keep ${KEPT}.`,
+      );
+  }
+  out.push(
+    "",
+    found.recommend === "more"
+      ? `Not enough answers yet: ${found.labels} of ${MIN_LABELS} (answer more in /vsr or here).`
+      : found.recommend === "apply"
+        ? "Recommended: apply"
+        : "Recommended: keep the current lines",
   );
-  return [
-    ...lines,
-    `Agrees with ${found.agreeBefore.agree} of ${found.agreeBefore.total} answers now${found.changed ? `, ${found.agreeAfter.agree} of ${found.agreeAfter.total} after` : ""}.`,
-    ...(found.unrouted
-      ? [
-          `${found.unrouted} answered tasks are under the confidence floor and keep their model.`,
-        ]
-      : []),
-    `${found.labels} answers: ${found.why}. Each line moves at most 0.15 per calibration.`,
-  ].join("\n");
+  return out.join("\n");
 }
 export interface CalibrationReport {
   persistence: "durable" | "unavailable";

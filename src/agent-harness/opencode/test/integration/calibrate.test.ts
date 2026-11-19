@@ -43,6 +43,14 @@ test(
     })) as CalibrationQuestion[];
     assert.equal(question?.acted, true);
     assert.deepEqual(question?.thresholds, [0.9]);
+    const again = (await native.rpc("calibrationSample", {
+      app: "shield",
+      skip: [question!.id],
+    })) as CalibrationQuestion[];
+    assert.ok(
+      !again.some((item) => item.id === question!.id),
+      "a question asked this run is not asked again",
+    );
 
     const second = await native.run("OUTPUT_CASE READ");
     const screen = await native.terminal(
@@ -63,7 +71,7 @@ test(
     assert.ok(
       screen.text.includes("vSR calibrate: which app?") &&
         screen.text.includes("Should vSR have warned the agent about") &&
-        screen.text.includes("needs 8 to move a line"),
+        screen.text.includes("Not enough answers yet"),
       screen.text.slice(-6000),
     );
     const after = (await native.rpc(
@@ -79,5 +87,41 @@ test(
       false,
       "too few answers change nothing",
     );
+  },
+);
+
+test(
+  "/vsr-calibrate offers another round while an app is short of 8 answers, as Claude Code's does",
+  { timeout: 300000 },
+  async (t) => {
+    const native = await fixture(t);
+    let last = await native.run("OUTPUT_CASE READ");
+    for (let i = 0; i < 5; i++) last = await native.run("OUTPUT_CASE READ");
+    const screen = await native.terminal(
+      last.sessionID,
+      [
+        { at: 12000, keys: "/vsr-calibrate" },
+        { at: 12800, keys: "\r" },
+        { at: 14000, keys: "Shield" },
+        { at: 14600, keys: "\r" },
+        { at: 16000, keys: "\r" }, // Both questions of the first round.
+        { at: 17500, keys: "\r" },
+        { at: 19000, keys: "\r" }, // Answer more questions.
+        { at: 20500, keys: "\r" },
+        { at: 22000, keys: "\r" },
+      ],
+      25,
+    );
+    assert.ok(
+      screen.text.includes("vSR calibrate: 2 of 8 answers") &&
+        screen.text.includes("Answer more questions") &&
+        screen.text.includes("vSR calibrate: 4 of 8 answers"),
+      screen.text.slice(-6000),
+    );
+    const after = (await native.rpc(
+      "calibrationReport",
+      {},
+    )) as CalibrationReport;
+    assert.equal(after.apps.find((item) => item.app === "shield")!.answered, 4);
   },
 );
