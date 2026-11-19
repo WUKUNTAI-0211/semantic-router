@@ -77,7 +77,8 @@ test(
         /files? or pages? read: the agent was warned about/.test(screen.text) &&
         screen.text.includes("Should vSR have warned the agent about") &&
         // The decision is shown in full under the question, not cut to one option line.
-        screen.text.includes("it warned; score 0.99") &&
+        screen.text.includes("vSR warned · score 0.99 (line 0.90)") &&
+        screen.text.includes("file or page") &&
         screen.text.includes("Not enough answers yet"),
       screen.text.slice(-6000),
     );

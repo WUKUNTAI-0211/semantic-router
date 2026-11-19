@@ -333,6 +333,112 @@ export default Plugin.define({
         ctx.ui.dialog.set({ size: "large" });
       });
     }
+    // A calibration question as its own dialog, without the select's search: the question, the decision in a box
+    // named for what it is, what vSR did and its score, then the answers. ↑↓ and Enter, a digit, or a click answer.
+    function ask(
+      shown: ReturnType<typeof calibrationQuestion>,
+      progress: string,
+      routed: boolean,
+    ): Promise<
+      | ReturnType<typeof calibrationQuestion>["options"][number]["value"]
+      | undefined
+    > {
+      return new Promise((resolve) => {
+        const [cursor, setCursor] = createSignal(0);
+        let settled = false;
+        const settle = (
+          value:
+            | ReturnType<typeof calibrationQuestion>["options"][number]["value"]
+            | undefined,
+        ) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        const count = shown.options.length;
+        const pick = (index: number) => {
+          settle(shown.options[index]!.value);
+          ctx.ui.dialog.clear();
+        };
+        const Question = () => {
+          ctx.keymap.layer(() => ({
+            mode: "global",
+            priority: 100,
+            commands: [
+              {
+                title: "Previous answer",
+                bind: "up",
+                run: () => setCursor((at) => (at + count - 1) % count),
+              },
+              {
+                title: "Next answer",
+                bind: "down",
+                run: () => setCursor((at) => (at + 1) % count),
+              },
+              { title: "Answer", bind: "return", run: () => pick(cursor()) },
+              ...shown.options.map((_, index) => ({
+                title: `Answer ${index + 1}`,
+                bind: String(index + 1),
+                run: () => pick(index),
+              })),
+            ],
+          }));
+          const on = (index: number) => cursor() === index;
+          return (
+            <box flexDirection="column" paddingLeft={2} paddingRight={2}>
+              <text fg={tone("muted")}>{progress}</text>
+              <text marginTop={1} fg={tone("info")}>
+                {shown.title}
+              </text>
+              <box
+                marginTop={1}
+                border
+                borderStyle="rounded"
+                borderColor={tone("border")}
+                title={` ${shown.about} `}
+                paddingLeft={1}
+                paddingRight={1}
+              >
+                <text fg={tone("text")}>{shown.subject}</text>
+              </box>
+              <text>
+                <Span
+                  fg={tone(
+                    routed ? "info" : shown.acted ? "warning" : "success",
+                  )}
+                >
+                  {shown.did}
+                </Span>
+                <Span fg={tone("muted")}>{` · ${shown.score}`}</Span>
+              </text>
+              <box flexDirection="column" marginTop={1}>
+                <For each={shown.options}>
+                  {(option, index) => (
+                    <text onMouseUp={() => pick(index())}>
+                      <Span fg={tone(on(index()) ? "info" : "muted")}>
+                        {`${on(index()) ? "›" : " "} ${index() + 1}  `}
+                      </Span>
+                      <Span fg={tone(on(index()) ? "info" : "text")}>
+                        {option.title}
+                      </Span>
+                    </text>
+                  )}
+                </For>
+              </box>
+              <text marginTop={1} marginBottom={1} fg={tone("muted")}>
+                {`↑↓ move · enter or 1-${count} answer · esc stop`}
+              </text>
+            </box>
+          );
+        };
+        ctx.renderer.clearSelection();
+        ctx.ui.dialog.show(
+          () => <Question />,
+          () => settle(undefined),
+        );
+        ctx.ui.dialog.set({ size: "large" });
+      });
+    }
     async function calibrate() {
       try {
         const found = (await remote.calibrationReport(
@@ -366,16 +472,14 @@ export default Plugin.define({
         const asked = new Set<string>();
         let round = apps;
         rounds: for (;;) {
-          for (const app of round)
-            for (const question of await sample(app, asked)) {
+          for (const app of round) {
+            const questions = await sample(app, asked);
+            for (const [n, question] of questions.entries()) {
               asked.add(question.id);
-              const shown = calibrationQuestion(question);
-              // The decision goes under the question, once: as each option's description it was cut to one line.
-              const answer = await wide(
-                ctx.ui.dialog.select({
-                  title: `${shown.title}\n\n${shown.description}`,
-                  options: shown.options,
-                }),
+              const answer = await ask(
+                calibrationQuestion(question),
+                `vSR calibrate · ${APP_WORDS[app][0]} · question ${n + 1} of ${questions.length}`,
+                app === "router",
               );
               if (!answer || answer === "stop") break rounds;
               if (answer !== "skip")
@@ -384,6 +488,7 @@ export default Plugin.define({
                   call(),
                 );
             }
+          }
           const report = (await remote.calibrationReport(
             {},
             call(),

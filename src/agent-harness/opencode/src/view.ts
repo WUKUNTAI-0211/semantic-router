@@ -468,24 +468,46 @@ const DID: Record<
   guard: ["it asked", "it let it run"],
   redact: ["it hid some", "it hid none"],
   shield: ["it warned", "it did not warn"],
-  check: ["it marked it", "it did not"],
-  escalate: ["it escalated", "it did not"],
+  check: ["it marked it", "it did not mark it"],
+  escalate: ["it escalated", "it did not escalate"],
 };
 const two = (value: number) => value.toFixed(2);
-// One question about a logged decision, in plain words, with what vSR did and how near the line it was.
+// What a question is about, named on the box that shows it.
+const ABOUT: Record<keyof typeof APP_NAMES, string> = {
+  router: "task",
+  guard: "command",
+  redact: "output",
+  shield: "file or page",
+  check: "answer",
+  escalate: "prompt",
+};
+// One question about a logged decision, in plain words, with what vSR did and how near the line it was: as a title
+// and description, and in parts for a dialog that sets them apart.
 export function calibrationQuestion(question: CalibrationQuestion): {
   title: string;
   description: string;
+  about: string;
+  subject: string;
+  did: string;
+  acted: boolean;
+  score: string;
   options: { value: CalibrationLabel | "skip" | "stop"; title: string }[];
 } {
   const tail = [
     { value: "skip" as const, title: "Not sure (skip)" },
     { value: "stop" as const, title: "Stop asking" },
   ];
-  if (question.app === "router")
+  if (question.app === "router") {
+    const tier = TIER_NAMES[question.tier ?? 1]!;
+    const score = `difficulty ${two(question.level ?? 0)} (lines ${two(question.thresholds[0]!)} and ${two(question.thresholds[1]!)})`;
     return {
-      title: `This task went to ${TIER_NAMES[question.tier ?? 1]}. Was that right?`,
-      description: `${question.subject} · difficulty ${two(question.level ?? 0)} (lines ${two(question.thresholds[0]!)} and ${two(question.thresholds[1]!)})`,
+      title: `This task went to ${tier}. Was that right?`,
+      description: `${question.subject} · ${score}`,
+      about: ABOUT.router,
+      subject: question.subject,
+      did: `vSR sent it to ${tier}`,
+      acted: true,
+      score,
       options: [
         { value: "too-low", title: "It needed a stronger model" },
         { value: "right", title: "The model was right" },
@@ -493,13 +515,20 @@ export function calibrationQuestion(question: CalibrationQuestion): {
         ...tail,
       ],
     };
+  }
   const [yes, no] = DID[question.app];
   const scores = (question.scores ?? [])
     .map((score, i) => `${two(score)} (line ${two(question.thresholds[i]!)})`)
     .join(", ");
+  const did = question.acted ? yes : no;
   return {
     title: ASK[question.app],
-    description: `${question.subject} · ${question.acted ? yes : no}; score ${scores}`,
+    description: `${question.subject} · ${did}; score ${scores}`,
+    about: ABOUT[question.app],
+    subject: question.subject,
+    did: did.replace(/^it /, "vSR "),
+    acted: Boolean(question.acted),
+    score: `score ${scores}`,
     options: [
       { value: "yes", title: "Yes" },
       { value: "no", title: "No" },
