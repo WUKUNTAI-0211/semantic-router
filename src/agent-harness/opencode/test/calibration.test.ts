@@ -377,8 +377,8 @@ test("calibrated thresholds apply over the options, outlive a restart and give w
   const config = settings();
   const calibrated = new Calibrated(config, store);
   await calibrated.load();
-  await calibrated.apply("guard", [0.8], 5);
-  await calibrated.apply("router", [0.7, 1.4, 0.45], 6);
+  await calibrated.apply("guard", [0.8], "vela3-lite", 5);
+  await calibrated.apply("router", [0.7, 1.4, 0.45], "vela3-fast", 6);
   assert.equal(config.guard.reviewThreshold, 0.8);
   assert.deepEqual(thresholdsOf(config).router, [0.7, 1.4, 0.45]);
   await assert.rejects(calibrated.apply("router", [1.5, 1.4, 0.5]));
@@ -387,7 +387,11 @@ test("calibrated thresholds apply over the options, outlive a restart and give w
   const again = new Calibrated(restarted, store);
   await again.load();
   assert.equal(restarted.guard.reviewThreshold, 0.8);
-  assert.deepEqual(again.state(), { at: 6, apps: ["router", "guard"] });
+  assert.deepEqual(
+    again.state(),
+    { at: 6, model: "vela3-fast", apps: ["router", "guard"] },
+    "the decision model of the last calibration is kept, for the probe",
+  );
 
   const edited = parseSettings({ guard: { reviewThreshold: 0.95 } });
   await new Calibrated(edited, store).load();

@@ -32,7 +32,7 @@ export type Span = {
 };
 export const PII_QUESTIONS = { pii: { preset: "pii" } };
 // Dates and domain names remain useful source data; they are not masked by this policy.
-const LABEL_TAGS: Record<string, Tag> = {
+export const LABEL_TAGS: Record<string, Tag> = {
   PERSON: "name",
   EMAIL_ADDRESS: "email",
   PHONE_NUMBER: "phone",

@@ -5,6 +5,7 @@ import type { Settings } from "./settings.ts";
 import type { RuntimeStatus } from "./runtime.ts";
 import type { ControlResult } from "./controls.ts";
 import type { Verification } from "./verify.ts";
+import type { ProbeRow } from "./probes.ts";
 export interface ViewSnapshot extends Snapshot {
   answerable: string[];
   apps: Settings["apps"];
@@ -664,6 +665,8 @@ export interface CalibrationReport {
   at?: number;
   since: number;
   remind: boolean;
+  model?: string;
+  calibratedModel?: string;
   apps: {
     app: keyof typeof APP_NAMES;
     enabled: boolean;
@@ -672,6 +675,90 @@ export interface CalibrationReport {
     thresholds: number[];
     calibrated: boolean;
   }[];
+}
+export interface ProbeResult {
+  model?: string;
+  calibratedModel?: string;
+  rows: ProbeRow[];
+}
+// What the decision model changed from, when it did since the last calibration.
+export const modelChanged = (found: {
+  model?: string;
+  calibratedModel?: string;
+}) =>
+  Boolean(
+    found.model &&
+      found.calibratedModel &&
+      found.model !== found.calibratedModel,
+  );
+const DOES: Record<string, [string, string]> = {
+  guard: ["vSR holds it", "it runs"],
+  shield: ["vSR warns", "no warning"],
+  redact: ["vSR hides personal data", "nothing hidden"],
+  check: ["vSR marks it", "no mark"],
+  escalate: ["vSR escalates", "no escalation"],
+  repeat: ["a repeat", "not a repeat"],
+};
+function does(row: ProbeRow, verdict: ProbeRow["expect"]): string {
+  if (verdict === "kept") return "the model is kept";
+  if (verdict === "light" || verdict === "medium" || verdict === "strong")
+    return `routed ${verdict}`;
+  const [acts, passes] = DOES[row.repeat ? "repeat" : row.app]!;
+  return verdict === "acts" ? acts : passes;
+}
+const score2 = (value: number | undefined) =>
+  value === undefined ? "-" : value.toFixed(2);
+// The probe in plain words, as the Claude Code plugin's calibrate tells it: per app how many known cases the model
+// still decides as measured, and each one that flipped, drifted or got no answer.
+export function probeText(found: ProbeResult): string {
+  const out = [
+    `Decision model: ${found.model ?? "unknown"}` +
+      (modelChanged(found)
+        ? `; you last calibrated with ${found.calibratedModel}.`
+        : "."),
+  ];
+  const apps = [...new Set(found.rows.map((row) => row.app))];
+  for (const app of apps) {
+    const rows = found.rows.filter((row) => row.app === app);
+    const count = (status: ProbeRow["status"]) =>
+      rows.filter((row) => row.status === status).length;
+    out.push(
+      "",
+      `${APP_NAMES[app]}, ${rows.length} known cases: ` +
+        [
+          `${count("ok")} as measured`,
+          count("flip") && `${count("flip")} flipped`,
+          count("drift") && `${count("drift")} drifted`,
+          count("error") && `${count("error")} no answer`,
+        ]
+          .filter(Boolean)
+          .join(", ") +
+        ".",
+    );
+    for (const row of rows) {
+      const name = clip(row.name, 48);
+      if (row.status === "flip")
+        out.push(
+          `  Flipped: ${name}: ${does(row, row.now!)} now (${score2(row.score)}), measured ${does(row, row.expect)} (${score2(row.measured)}).`,
+        );
+      else if (row.status === "drift")
+        out.push(
+          `  Drifted: ${name}: ${score2(row.measured)} → ${score2(row.score)}.`,
+        );
+      else if (row.status === "error")
+        out.push(`  No answer: ${name} (${row.error ?? "error"}).`);
+    }
+  }
+  if (!found.rows.length) out.push("", "No known cases for these apps.");
+  else if (
+    modelChanged(found) &&
+    found.rows.some((row) => row.status === "flip" || row.status === "drift")
+  )
+    out.push(
+      "",
+      "Your answers were given on the old model's scores, so lines fitted to them may not suit this one: answer some newer decisions before you apply.",
+    );
+  return out.join("\n");
 }
 // At most `width` characters, an ellipsis taking the last when it is cut.
 export function clip(text: string, width: number): string {

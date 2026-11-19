@@ -149,15 +149,16 @@ keyboard when it opens, and `Esc` closes it. To keep the panel open and type,
 press `ctrl+x` then `←` to return to the prompt; there `Esc` interrupts the
 model as usual, and `/vsr` closes the panel.
 
-| Command          | What it does                                                           |
-| ---------------- | ---------------------------------------------------------------------- |
-| `/vsr`           | Open the decisions panel, or close it                                  |
-| `/vsr-apps`      | Turn an app on or off, or hand the apps back to a Router listener      |
-| `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done |
-| `/vsr-check`     | Check the decision runtime: one case per enabled app                   |
-| `/vsr-goal`      | Choose the router's goal: balanced, quality or save                    |
-| `/vsr-refresh`   | Refresh the panel                                                      |
-| `/vsr-calibrate` | Fit an app's thresholds to your answers                                |
+| Command          | What it does                                                            |
+| ---------------- | ----------------------------------------------------------------------- |
+| `/vsr`           | Open the decisions panel, or close it                                   |
+| `/vsr-apps`      | Turn an app on or off, or hand the apps back to a Router listener       |
+| `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done  |
+| `/vsr-check`     | Check the decision runtime: one case per enabled app                    |
+| `/vsr-goal`      | Choose the router's goal: balanced, quality or save                     |
+| `/vsr-refresh`   | Refresh the panel                                                       |
+| `/vsr-calibrate` | Fit an app's thresholds to your answers                                 |
+| `/vsr-probe`     | Ask the decision model the 30 known cases; say which flipped or drifted |
 
 What you change in `/vsr-apps`, `/vsr-waits` and `/vsr-goal` is saved and applies to every session,
 also after a restart. Changing the same setting in the options later wins over
@@ -272,7 +273,10 @@ kept. Run `/vsr-calibrate` and pick an app:
    another round.
 2. For apps other than router, pick what matters more: balanced, fewer false
    alarms or catch more.
-3. It says, in plain words, what each line does and where it would move, what
+3. When the decision model is not the one you last calibrated with, it asks
+   that model the app's known cases first (the probe below) and says which of
+   them it now decides the other way or scores differently.
+4. It says, in plain words, what each line does and where it would move, what
    the change would do on your own log (for example "vSR would hold 5 of these
    40 commands for you instead of 1"), how many of your answers the current and
    the new lines agree with, and whether to apply. The recommended button is
@@ -290,6 +294,16 @@ in the options drops the calibration in favor of what you set. The panel's
 Calibration line says when you last calibrated and how many decisions came
 since, and suggests `/vsr-calibrate` after `calibrateEvery` of them (200 by
 default).
+
+`/vsr-probe` asks the decision model the 30 known cases of the Claude Code
+plugin's probe, for each app that is on, and says per app how many it still
+decides as they were measured on vela3-lite. A case **flipped** when the model
+now decides it the other way at the thresholds it was measured at, and
+**drifted** when its score moved more than 0.15. Run it after changing
+`runtimeModel` or the runtime: answers given on the old model's scores may not
+fit the new one. Unlike `/vsr-check`, which asks one case per app through the
+hooks to show each app decides, the probe asks the model directly, so the fixed
+guard rules do not answer for it.
 
 ## A Router listener's switches and rules
 

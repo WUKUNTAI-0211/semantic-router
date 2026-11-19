@@ -183,6 +183,11 @@ export class RuntimeClient {
   status(): RuntimeStatus {
     return structuredClone(this.state);
   }
+  // The decision model asked: the configured one, else the first the runtime listed, as the Claude Code plugin's
+  // calibrate names it. Unknown until a listing is read.
+  model(): string | undefined {
+    return this.settings.runtimeModel || this.state.models[0]?.id;
+  }
   close(): void {
     this.closed.abort();
   }

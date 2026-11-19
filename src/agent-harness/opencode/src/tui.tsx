@@ -17,7 +17,9 @@ import {
   clip,
   details,
   gauge,
+  modelChanged,
   modelName,
+  probeText,
   report,
   shortSubject,
   subjectLine,
@@ -32,6 +34,7 @@ import type {
   CalibrationQuestion,
   CalibrationReport,
   CalibrationSuggestion,
+  ProbeResult,
   Tone,
 } from "./view.ts";
 import type { ViewSnapshot, ViewState } from "./view.ts";
@@ -161,6 +164,19 @@ export default Plugin.define({
     }
     // Each call gets its own timeout: one signal made at load would have fired for every call after the first 10 s.
     const call = () => ({ ...options, signal: AbortSignal.timeout(10_000) });
+    // The probe asks up to 30 known cases one after another, so it gets longer.
+    const long = () => ({ ...options, signal: AbortSignal.timeout(180_000) });
+    async function probeNow(apps?: App[]): Promise<ProbeResult | undefined> {
+      ctx.ui.toast.show({ message: "vSR: asking the known cases…" });
+      try {
+        return (await remote.calibrationProbe(
+          apps ? { apps } : {},
+          long(),
+        )) as ProbeResult;
+      } catch {
+        return undefined;
+      }
+    }
     // Calibration: pick an app, answer questions about its decisions nearest the line, pick a goal, then apply
     // the fitted line or keep the current one. Nothing changes until the person applies it.
     async function calibrate() {
@@ -261,6 +277,15 @@ export default Plugin.define({
                 ],
               });
         if (!goal) return;
+        // After a change of decision model, the known cases asked again first, as Claude Code's step 7 does.
+        let probed = "";
+        if (modelChanged(found)) {
+          const result = await probeNow([app]);
+          probed = result
+            ? probeText(result)
+            : `The decision model changed from ${found.calibratedModel} to ${found.model}, and the known cases got no answer.`;
+          probed += "\n\n";
+        }
         const suggested = (await remote.calibrationSuggest(
           { app, goal },
           call(),
@@ -268,7 +293,7 @@ export default Plugin.define({
         if (!suggested.changed) {
           await ctx.ui.dialog.alert({
             title: `vSR calibrate: ${names[app]}`,
-            message: suggestionText(suggested, goal),
+            message: probed + suggestionText(suggested, goal),
           });
           return;
         }
@@ -276,7 +301,7 @@ export default Plugin.define({
         const recommended = (yes: boolean) => (yes ? " (recommended)" : "");
         const apply = await ctx.ui.dialog.confirm({
           title: `vSR calibrate: ${names[app]}`,
-          message: suggestionText(suggested, goal),
+          message: probed + suggestionText(suggested, goal),
           label: {
             confirm: `Apply${recommended(suggested.recommend === "apply")}`,
             cancel: `Keep the current lines${recommended(suggested.recommend !== "apply")}`,
@@ -379,6 +404,26 @@ export default Plugin.define({
           slash: { name: "vsr-calibrate" },
           palette: true,
           run: calibrate,
+        },
+        {
+          id: "vsr.probe",
+          title: "vSR probe the decision model on known cases",
+          slash: { name: "vsr-probe" },
+          palette: true,
+          run: async () => {
+            const result = await probeNow();
+            if (!result) {
+              ctx.ui.toast.show({
+                message: "vSR probe unavailable; retry when connected.",
+                variant: "warning",
+              });
+              return;
+            }
+            await ctx.ui.dialog.alert({
+              title: "vSR probe",
+              message: probeText(result),
+            });
+          },
         },
         {
           id: "vsr.refresh",

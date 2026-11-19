@@ -4,6 +4,7 @@ import { fixture } from "./output-fixture.ts";
 import type {
   CalibrationQuestion,
   CalibrationReport,
+  ProbeResult,
   ViewSnapshot,
 } from "../../src/view.ts";
 
@@ -86,6 +87,39 @@ test(
       after.apps.find((item) => item.app === "shield")!.calibrated,
       false,
       "too few answers change nothing",
+    );
+    assert.equal(
+      after.model,
+      "fixture",
+      "the decision model the runtime lists",
+    );
+
+    // The probe: the known cases of the apps asked for, judged at the thresholds they were measured at.
+    const probed = (await native.rpc("calibrationProbe", {
+      apps: ["shield"],
+    })) as ProbeResult;
+    assert.equal(probed.model, "fixture");
+    assert.deepEqual(
+      probed.rows.map((row) => [row.app, row.status === "error"]),
+      [
+        ["shield", false],
+        ["shield", false],
+        ["shield", false],
+        ["shield", false],
+      ],
+    );
+    const shown = await native.terminal(
+      second.sessionID,
+      [
+        { at: 12000, keys: "/vsr-probe" },
+        { at: 12800, keys: "\r" },
+      ],
+      18,
+    );
+    assert.ok(
+      shown.text.includes("Decision model: fixture.") &&
+        /Shield, 4 known cases: /.test(shown.text),
+      shown.text.slice(-6000),
     );
   },
 );

@@ -41,7 +41,10 @@ fitted thresholds; the questions and the suggestion text, in `plain.py`'s
 words with the agent and OpenCode's tiers, are in `view.ts`. One difference is
 deliberate: the Claude Code plugin logs redact and shield only when they act,
 so their lines only rise there, while this log keeps what they let through too,
-so their lines can move either way.
+so their lines can move either way. `probes.ts` is the probe in `runtime.py`
+(`run_probes`): the cases are `probes.jsonl` (test/probes.test.ts fails when
+they differ), judged at the Claude Code plugin's default thresholds they were
+measured at, since some of this plugin's defaults differ.
 `masking.ts` owns fixed secret patterns, validated Unicode spans and interval
 masking. `output-policy.ts` owns Redact/Shield scanning, coverage and attachment
 policy. `output-hooks.ts` adapts tool results/outgoing context and prevents

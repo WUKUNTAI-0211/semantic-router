@@ -13,6 +13,7 @@ import { Vsr } from "./rpc.ts";
 import { RuntimeClient } from "./runtime.ts";
 import { Listener } from "./listener.ts";
 import { verify } from "./verify.ts";
+import { probe } from "./probes.ts";
 import { DecisionLog, acted } from "./log.ts";
 import type { Label } from "./log.ts";
 import { labelsOf, sample, suggest } from "./calibration.ts";
@@ -156,6 +157,12 @@ export default Plugin.define({
         remind: settings.calibrateEvery > 0 && since >= settings.calibrateEvery,
       };
     };
+    // The decision model now: reading the listing again, so a model the runtime switched to is seen.
+    const modelNow = async (signal?: AbortSignal) => {
+      await connect();
+      await runtime.discover(2000, signal);
+      return runtime.model();
+    };
     const appOf = (input: unknown): App => {
       if (!isRecord(input) || !APPS.includes(input.app as App))
         throw new Error("Invalid app");
@@ -214,14 +221,17 @@ export default Plugin.define({
           probes,
         };
       },
-      calibrationReport: async () => {
+      calibrationReport: async (_input, request) => {
         const lines = log.all();
         const labels = labelsOf(lines);
         const state = calibrated.state();
         const thresholds = thresholdsOf(settings);
+        const model = await modelNow(request.signal);
         return {
           persistence: log.persistence,
           ...calibrationState(),
+          ...(model ? { model } : {}),
+          ...(state.model ? { calibratedModel: state.model } : {}),
           apps: APPS.map((app) => {
             const mine = lines.filter((line) => line.app === app);
             return {
@@ -282,9 +292,26 @@ export default Plugin.define({
           goalOf(input),
         );
         if (!found.changed) return { applied: false, suggestion: found };
-        await calibrated.apply(app, found.after);
+        await calibrated.apply(app, found.after, await modelNow());
         await stateChanged();
         return { applied: true, suggestion: found };
+      },
+      calibrationProbe: async (input, request) => {
+        const model = await modelNow(request.signal);
+        const asked = (input as { apps?: App[] }).apps;
+        const rows = await probe(
+          // The apps asked for, else every one that is on, as the Claude Code plugin's probe takes its enabled apps.
+          asked ?? APPS.filter((app) => settings.apps[app]),
+          thresholdsOf(settings),
+          runtime,
+          request.signal,
+        );
+        const before = calibrated.state().model;
+        return {
+          ...(model ? { model } : {}),
+          ...(before ? { calibratedModel: before } : {}),
+          rows,
+        };
       },
       controls: async (input) => {
         const result = await controls.update(input);

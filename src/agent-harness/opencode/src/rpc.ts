@@ -2,6 +2,9 @@ import { Rpc } from "@opencode/plugin/rpc";
 import { APPS } from "./settings.ts";
 import { FEEDBACK, OUTCOMES, REASONS } from "./decisions.ts";
 const id = { type: "string", minLength: 1, maxLength: 256 } as const;
+const verdict = {
+  enum: ["acts", "passes", "light", "medium", "strong", "kept"],
+} as const;
 const session = {
   type: "object",
   properties: { sessionID: id },
@@ -299,6 +302,9 @@ export const Vsr = Rpc.define({
           at: { type: "number" },
           since: { type: "integer", minimum: 0 },
           remind: { type: "boolean" },
+          // The decision model now, and the one the last calibration was made with: when they differ, probe.
+          model: { type: "string" },
+          calibratedModel: { type: "string" },
           apps: {
             type: "array",
             items: {
@@ -396,6 +402,45 @@ export const Vsr = Rpc.define({
           suggestion,
         },
         required: ["applied", "suggestion"],
+        additionalProperties: false,
+      },
+    },
+    // Known cases asked again, as the Claude Code plugin's `calibrate probe`: what the decision model now decides.
+    calibrationProbe: {
+      input: {
+        type: "object",
+        properties: { apps: { type: "array", items: app, maxItems: 6 } },
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          model: { type: "string" },
+          calibratedModel: { type: "string" },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                app,
+                repeat: { const: true },
+                name: { type: "string" },
+                measured: { type: "number" },
+                score: { type: "number" },
+                expect: verdict,
+                now: verdict,
+                yours: verdict,
+                status: { enum: ["ok", "drift", "flip", "error"] },
+                drift: { type: "number" },
+                error: { type: "string" },
+                elapsedMs: { type: "number", minimum: 0 },
+              },
+              required: ["app", "name", "expect", "status", "elapsedMs"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["rows"],
         additionalProperties: false,
       },
     },

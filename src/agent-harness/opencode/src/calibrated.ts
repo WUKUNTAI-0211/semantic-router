@@ -56,10 +56,13 @@ interface Saved {
   // The options' thresholds when it was calibrated: changing them in opencode.json drops the calibration.
   base: string;
   at: number;
+  // The decision model the last calibration was made with, when it was known.
+  model?: string;
   thresholds: Partial<Thresholds>;
 }
 export interface CalibrationState {
   at?: number;
+  model?: string;
   apps: App[];
 }
 
@@ -95,6 +98,7 @@ export class Calibrated {
       value.version !== 1 ||
       value.base !== this.base ||
       typeof value.at !== "number" ||
+      (value.model !== undefined && typeof value.model !== "string") ||
       !isRecord(value.thresholds)
     )
       return;
@@ -105,7 +109,13 @@ export class Calibrated {
       if (!valid(app, values)) return;
       thresholds[app] = values;
     }
-    this.saved = { version: 1, base: this.base, at: value.at, thresholds };
+    this.saved = {
+      version: 1,
+      base: this.base,
+      at: value.at,
+      ...(typeof value.model === "string" ? { model: value.model } : {}),
+      thresholds,
+    };
     for (const [app, values] of Object.entries(thresholds))
       assign(this.settings, app as App, values);
   }
@@ -113,6 +123,7 @@ export class Calibrated {
   async apply(
     app: App,
     values: readonly number[],
+    model?: string,
     at = Date.now(),
   ): Promise<void> {
     if (!valid(app, [...values])) throw new Error("Invalid thresholds");
@@ -120,6 +131,7 @@ export class Calibrated {
       version: 1,
       base: this.base,
       at,
+      ...(model ? { model } : {}),
       thresholds: { ...this.saved?.thresholds, [app]: [...values] },
     };
     await this.store.set("calibration.v1", next);
@@ -129,6 +141,7 @@ export class Calibrated {
   state(): CalibrationState {
     return {
       ...(this.saved ? { at: this.saved.at } : {}),
+      ...(this.saved?.model ? { model: this.saved.model } : {}),
       apps: Object.keys(this.saved?.thresholds ?? {}) as App[],
     };
   }
