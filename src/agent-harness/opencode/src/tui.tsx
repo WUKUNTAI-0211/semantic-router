@@ -164,6 +164,11 @@ export default Plugin.define({
     }
     // Each call gets its own timeout: one signal made at load would have fired for every call after the first 10 s.
     const call = () => ({ ...options, signal: AbortSignal.timeout(10_000) });
+    // Calibration's dialogs say a decision or a suggestion in full, so they open large rather than medium.
+    function wide<T>(open: Promise<T>): Promise<T> {
+      ctx.ui.dialog.set({ size: "large" });
+      return open;
+    }
     // The probe asks up to 30 known cases one after another, so it gets longer.
     const long = () => ({ ...options, signal: AbortSignal.timeout(180_000) });
     async function probeNow(apps?: App[]): Promise<ProbeResult | undefined> {
@@ -213,13 +218,13 @@ export default Plugin.define({
           for (const question of questions) {
             asked.add(question.id);
             const shown = calibrationQuestion(question);
-            const answer = await ctx.ui.dialog.select({
-              title: shown.title,
-              options: shown.options.map((option) => ({
-                ...option,
-                description: shown.description,
-              })),
-            });
+            // The decision goes under the question, once: as each option's description it was cut to one line.
+            const answer = await wide(
+              ctx.ui.dialog.select({
+                title: `${shown.title}\n\n${shown.description}`,
+                options: shown.options,
+              }),
+            );
             if (!answer || answer === "stop") break rounds;
             if (answer !== "skip")
               await remote.calibrationLabel(
@@ -291,22 +296,26 @@ export default Plugin.define({
           call(),
         )) as CalibrationSuggestion;
         if (!suggested.changed) {
-          await ctx.ui.dialog.alert({
-            title: `vSR calibrate: ${names[app]}`,
-            message: probed + suggestionText(suggested, goal),
-          });
+          await wide(
+            ctx.ui.dialog.alert({
+              title: `vSR calibrate: ${names[app]}`,
+              message: probed + suggestionText(suggested, goal),
+            }),
+          );
           return;
         }
         // The recommendation is marked on its button, as the Claude Code plugin marks it first.
         const recommended = (yes: boolean) => (yes ? " (recommended)" : "");
-        const apply = await ctx.ui.dialog.confirm({
-          title: `vSR calibrate: ${names[app]}`,
-          message: probed + suggestionText(suggested, goal),
-          label: {
-            confirm: `Apply${recommended(suggested.recommend === "apply")}`,
-            cancel: `Keep the current lines${recommended(suggested.recommend !== "apply")}`,
-          },
-        });
+        const apply = await wide(
+          ctx.ui.dialog.confirm({
+            title: `vSR calibrate: ${names[app]}`,
+            message: probed + suggestionText(suggested, goal),
+            label: {
+              confirm: `Apply${recommended(suggested.recommend === "apply")}`,
+              cancel: `Keep the current lines${recommended(suggested.recommend !== "apply")}`,
+            },
+          }),
+        );
         if (!apply) return;
         const done = (await remote.calibrationApply({ app, goal }, call())) as {
           applied: boolean;
@@ -419,10 +428,12 @@ export default Plugin.define({
               });
               return;
             }
-            await ctx.ui.dialog.alert({
-              title: "vSR probe",
-              message: probeText(result),
-            });
+            await wide(
+              ctx.ui.dialog.alert({
+                title: "vSR probe",
+                message: probeText(result),
+              }),
+            );
           },
         },
         {
