@@ -1314,10 +1314,13 @@ export default Plugin.define({
     );
     // The answers calibration learns from, as buttons; the one given is filled in.
     const Answers = (props: { decision: Decision }) => (
-      <box flexDirection="row">
+      <box flexDirection="row" flexWrap="wrap" gap={1}>
         {answersOf(props.decision).map((choice, index) => (
           <text
-            marginRight={1}
+            flexShrink={0}
+            maxWidth="100%"
+            wrapMode="none"
+            truncate
             onMouseUp={(event: { stopPropagation(): void }) => {
               event.stopPropagation();
               pick(props.decision.id);

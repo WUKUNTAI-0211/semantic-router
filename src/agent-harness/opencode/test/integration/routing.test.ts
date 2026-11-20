@@ -512,6 +512,41 @@ test(
 );
 
 test(
+  "route detail keeps each answer label together in a narrow terminal",
+  { timeout: 60000 },
+  async (t) => {
+    const native = await fixture(t, false, false, true);
+    const created = (await native.api("/api/session", {
+      model: { providerID: "fixture", id: "middle", variant: "medium" },
+      permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    })) as { data: { id: string } };
+    const id = created.data.id;
+    await native.api(`/api/session/${id}/prompt`, {
+      text: "HARDTURN prove the parser terminates on every input and design its invariants",
+    });
+    await native.api(`/api/experimental/session/${id}/wait`, undefined, "POST");
+    const screen = await native.terminal(
+      id,
+      [
+        { at: 2000, keys: "/vsr" },
+        { at: 2500, keys: "\r" },
+        { at: 3200, keys: "\u001b[B" },
+        { at: 3700, keys: "\r" },
+        { at: 4200, resize: [45, 46] },
+      ],
+      5.5,
+    );
+    const visible = screen.last
+      .split("\n")
+      .map((line) => line.slice(0, 46))
+      .join("\n");
+    assert.match(visible, /answer +none yet/, visible);
+    assert.match(visible, /\[1 right model\] +\[2 needed stronger\]/, visible);
+    assert.match(visible, /\[3 could be lighter\]/, visible);
+  },
+);
+
+test(
   "your own turns run on the tier the router picks, and a pushback climbs the turn itself",
   { timeout: 120000 },
   async (t) => {
