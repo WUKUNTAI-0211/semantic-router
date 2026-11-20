@@ -1,0 +1,43 @@
+version: v0.5
+listeners:
+  - name: http-18899
+    address: 127.0.0.1
+    port: 18899
+    timeout: "600s"
+providers:
+  defaults:
+    model: Qwen/Qwen3-0.6B
+  models:
+    - name: Qwen/Qwen3-0.6B
+      reliability:
+        lb_policy: least_request
+      backend_refs:
+        - name: gpu-a
+          endpoint: 127.0.0.1:18751
+          protocol: http
+          provider: vllm
+          engine: vllm
+        - name: gpu-b
+          endpoint: 127.0.0.1:18752
+          protocol: http
+          provider: vllm
+          engine: vllm
+global:
+  services:
+    observability:
+      backend_telemetry:
+        enabled: true
+recipes:
+  - name: default
+    decisions:
+      - name: default-route
+        priority: 100
+        rules:
+          operator: AND
+          conditions: []
+        modelRefs:
+          - model: Qwen/Qwen3-0.6B
+            use_reasoning: false
+entrypoints:
+  - model_names: ["vllm-sr/auto"]
+    recipe: default
