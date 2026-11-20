@@ -65,14 +65,43 @@ export function rulesOf(listing: unknown): ListenerRules | undefined {
   };
 }
 
-// The apps a listing's `vsr` turns on or off, field by field: a field of the wrong type is left to the option.
-export function profileOf(listing: unknown): Partial<Record<App, boolean>> {
+// What a listing's `vsr` profile sets: each app on or off, the router's goal (`router_goal`) and whether it routes
+// your own turns (`router_turns`), as the Claude Code plugin's lib/profile.ts reads them. A field of the wrong type is
+// left to the option.
+export type Field = App | "goal" | "turns";
+export const FIELDS: readonly Field[] = [...APPS, "goal", "turns"];
+export type Values = {
+  [K in Field]: K extends "goal" ? Settings["routing"]["goal"] : boolean;
+};
+const GOALS = ["balanced", "quality", "save"];
+export function profileOf(listing: unknown): Partial<Values> {
   const vsr = isRecord(listing) ? listing.vsr : undefined;
   if (!isRecord(vsr)) return {};
-  const profile: Partial<Record<App, boolean>> = {};
+  const profile: Partial<Values> = {};
   for (const app of APPS)
     if (typeof vsr[app] === "boolean") profile[app] = vsr[app];
+  if (GOALS.includes(vsr.router_goal as string))
+    profile.goal = vsr.router_goal as Values["goal"];
+  if (typeof vsr.router_turns === "boolean") profile.turns = vsr.router_turns;
   return profile;
+}
+const valuesOf = (settings: Settings): Values => ({
+  ...settings.apps,
+  goal: settings.routing.goal,
+  turns: settings.routing.turns,
+});
+function assign(settings: Settings, values: Values): void {
+  for (const app of APPS) settings.apps[app] = values[app];
+  settings.routing.goal = values.goal;
+  settings.routing.turns = values.turns;
+}
+// What a profile changes, in the words of the Claude Code plugin's note: `redact off, goal save, turns on`.
+export function noteOf(changed: Partial<Values>): string {
+  const words = Object.entries(changed).map(
+    ([field, value]) =>
+      `${field} ${value === true ? "on" : value === false ? "off" : value}`,
+  );
+  return words.length ? `vSR follows the listener: ${words.join(", ")}` : "";
 }
 
 // UTF-16 offsets of a text's code points, one past the end included.
@@ -188,24 +217,28 @@ export class Listener {
   rules: ListenerRules = NO_RULES;
   private askedAt = -Infinity;
   private reading: Promise<void> | undefined;
-  private base: Record<App, boolean>;
-  private readonly defaults: Record<App, boolean>;
-  private readonly configured: ReadonlySet<App>;
+  private base: Values;
+  private readonly defaults: Values;
+  private readonly configured: ReadonlySet<Field>;
   private readonly settings: Settings;
   private readonly runtime: Pick<
     RuntimeClient,
     "listing" | "rules" | "listenerKey"
   >;
-  // The apps the person set in the plugin options or changed in the decision view: those stay theirs whatever the
+  // The fields the person set in the plugin options or changed in the decision view: those stay theirs whatever the
   // listener says.
-  private pinned: Set<App>;
+  private pinned: Set<Field>;
   private readonly store: RuleStore | undefined;
   private restored = false;
   private readonly now: () => number;
+  // What the listener's profile changes from the person's own settings, said once in a toast when it is new.
+  note = "";
+  // Told when the note changes, so the decision view shows it.
+  noted: () => void = () => {};
   constructor(
     settings: Settings,
     runtime: Pick<RuntimeClient, "listing" | "rules" | "listenerKey">,
-    pinned: Iterable<App>,
+    pinned: Iterable<Field>,
     store?: RuleStore,
     now: () => number = Date.now,
   ) {
@@ -215,18 +248,26 @@ export class Listener {
     this.pinned = new Set(pinned);
     this.store = store;
     this.now = now;
-    this.defaults = { ...settings.apps };
-    this.base = { ...settings.apps };
+    this.defaults = valuesOf(settings);
+    this.base = valuesOf(settings);
   }
-  // The person set these apps: the profile leaves them alone from now on.
-  pin(apps: Partial<Record<App, boolean>>): void {
-    for (const app of APPS) {
-      const value = apps[app];
-      if (typeof value !== "boolean") continue;
-      this.pinned.add(app);
-      this.base[app] = value;
-      this.settings.apps[app] = value;
+  // The person set these: the profile leaves them alone from now on.
+  pin(values: Partial<Values>): void {
+    for (const field of FIELDS) {
+      const value = values[field];
+      if (value === undefined) continue;
+      this.pinned.add(field);
+      (this.base as Record<Field, unknown>)[field] = value;
     }
+    assign(this.settings, { ...valuesOf(this.settings), ...this.pick(values) });
+  }
+  private pick(values: Partial<Values>): Partial<Values> {
+    return Object.fromEntries(
+      FIELDS.filter((field) => values[field] !== undefined).map((field) => [
+        field,
+        values[field],
+      ]),
+    );
   }
   // Another runtime: the rules read from the previous one no longer apply, and the next prompt reads the new listing.
   forget(): void {
@@ -234,7 +275,7 @@ export class Listener {
     this.restored = false;
     this.askedAt = -Infinity;
   }
-  // Hands the apps changed in the decision view back to the listener; the ones named in the plugin options stay.
+  // Hands what was changed in the decision view back to the listener; what the plugin options name stays.
   async unpin(): Promise<void> {
     this.pinned = new Set(this.configured);
     this.base = { ...this.defaults };
@@ -262,10 +303,21 @@ export class Listener {
       return await this.restore();
     const listing = result.ok ? result.value : {};
     const profile = profileOf(listing);
-    for (const app of APPS)
-      this.settings.apps[app] = this.pinned.has(app)
-        ? this.base[app]
-        : (profile[app] ?? this.base[app]);
+    const changed: Partial<Values> = {};
+    const next = { ...this.base };
+    for (const field of FIELDS) {
+      const value = profile[field];
+      if (this.pinned.has(field) || value === undefined) continue;
+      (next as Record<Field, unknown>)[field] = value;
+      if (value !== this.base[field])
+        (changed as Record<Field, unknown>)[field] = value;
+    }
+    assign(this.settings, next);
+    const note = noteOf(changed);
+    if (note !== this.note) {
+      this.note = note;
+      this.noted();
+    }
     const rules = rulesOf(listing);
     if (!rules) return await this.restore();
     this.rules = rules;

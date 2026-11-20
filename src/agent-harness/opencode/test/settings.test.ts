@@ -10,6 +10,7 @@ test("defaults are independent and Check remains off", () => {
   assert.equal(two.apps.check, false);
   assert.equal(two.runtimeUrl, "http://127.0.0.1:8790/v1/decisions");
   assert.equal(two.calibrateEvery, 200);
+  assert.equal(two.routing.turns, false, "your turns stay yours by default");
   assert.equal(parseSettings({ calibrateEvery: 0 }).calibrateEvery, 0);
 });
 
@@ -26,6 +27,7 @@ test("invalid controls, unbounded retention and embedded credentials are rejecte
     { maxSessions: 0 },
     { calibrateEvery: -1 },
     { calibrateEvery: 2.5 },
+    { routing: { turns: "on" } },
     { runtimeTokenEnv: "BAD-NAME" },
     { runtimeUrl: "https://user:secret@example.test/v1/decisions" },
     { runtimeUrl: "https://example.test/v1/decisions?token=secret" },

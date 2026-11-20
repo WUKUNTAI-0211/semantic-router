@@ -6,6 +6,7 @@ import type { RuntimeStatus } from "./runtime.ts";
 import type { ControlResult } from "./controls.ts";
 import type { Verification } from "./verify.ts";
 import type { ProbeRow } from "./probes.ts";
+import type { TurnsView } from "./turns.ts";
 export interface ViewSnapshot extends Snapshot {
   answerable: string[];
   apps: Settings["apps"];
@@ -14,14 +15,18 @@ export interface ViewSnapshot extends Snapshot {
     revision: number;
     persistence: "durable" | "unavailable";
     goal: Settings["routing"]["goal"];
+    turns: boolean;
+    note: string;
   };
   calibration: { at?: number; since: number; remind: boolean };
   runtime: RuntimeStatus;
+  turns: TurnsView;
 }
 export type ControlPatch = {
   apps?: Partial<Settings["apps"]>;
   waits?: Partial<Settings["waits"]>;
   goal?: Settings["routing"]["goal"];
+  turns?: boolean;
   follow?: true;
 };
 export interface ViewService {
@@ -1004,6 +1009,11 @@ export function details(
     ],
     ["hid", counts.map(([label, count]) => `${label} ×${count}`).join(" · ")],
     ["found", decision.labels?.join(" · ")],
+    [
+      "cache",
+      decision.reread &&
+        `would re-read ${tokenCount(decision.reread.tokens)} tokens uncached: $${decision.reread.cost.toFixed(2)}, 3 turns save $${decision.reread.saving.toFixed(2)}`,
+    ],
     [
       "checked",
       decision.coverage &&

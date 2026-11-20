@@ -46,6 +46,9 @@ export const REASONS = [
   "listener-rule",
   "listener-unchecked",
   "agent-model",
+  // Your own turns: a short reply that never moves them down, and a move that waits for the prompt cache.
+  "follow-up",
+  "cache",
 ] as const;
 export type Reason = (typeof REASONS)[number];
 export interface Usage {
@@ -84,6 +87,11 @@ export interface Decision {
   features?: number[];
   // The app's thresholds when the decision was made, in calibration's order, so a later calibration does not redraw it.
   thresholds?: number[];
+  // A router decision about your own turn, not a subagent's task.
+  scope?: "turn";
+  // Why a move of your turns waited: rewriting `tokens` to the smaller model's cache costs `cost`, more than the
+  // `saving` three turns like the last one would make there (US dollars).
+  reread?: { tokens: number; cost: number; saving: number };
 }
 export const FEEDBACK = [
   "right",
@@ -232,6 +240,17 @@ export class DecisionStore {
           )))
     )
       throw new Error("Invalid decision subject");
+    if (
+      (input.scope !== undefined && input.scope !== "turn") ||
+      (input.reread !== undefined &&
+        (!isRecord(input.reread) ||
+          !Number.isInteger(input.reread.tokens) ||
+          input.reread.tokens < 0 ||
+          !Number.isFinite(input.reread.cost) ||
+          input.reread.cost < 0 ||
+          !Number.isFinite(input.reread.saving)))
+    )
+      throw new Error("Invalid turn decision");
     // Explicit projection also discards unexpected properties supplied by JS callers.
     const decision: Decision = {
       ...(input.coverage
@@ -266,6 +285,16 @@ export class DecisionStore {
         ? {}
         : { features: [...input.features] }),
       ...thresholdsOf(input.thresholds ?? this.thresholds?.(input.app)),
+      ...(input.scope ? { scope: input.scope } : {}),
+      ...(input.reread
+        ? {
+            reread: {
+              tokens: input.reread.tokens,
+              cost: input.reread.cost,
+              saving: input.reread.saving,
+            },
+          }
+        : {}),
     };
     return decision;
   }

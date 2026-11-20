@@ -81,6 +81,17 @@ const decision = {
       items: { type: "number", minimum: 0 },
       maxItems: 3,
     },
+    scope: { const: "turn" },
+    reread: {
+      type: "object",
+      properties: {
+        tokens: { type: "integer", minimum: 0 },
+        cost: { type: "number", minimum: 0 },
+        saving: { type: "number" },
+      },
+      required: ["tokens", "cost", "saving"],
+      additionalProperties: false,
+    },
   },
   required: ["id", "sessionID", "app", "outcome", "at"],
   additionalProperties: false,
@@ -187,14 +198,29 @@ export const Vsr = Rpc.define({
               revision: { type: "integer", minimum: 0 },
               persistence: { enum: ["durable", "unavailable"] },
               goal: { enum: ["balanced", "quality", "save"] },
+              turns: { type: "boolean" },
+              // What a Router listener's profile changes from the person's settings; empty when nothing.
+              note: { type: "string" },
             },
-            required: ["revision", "persistence", "goal"],
+            required: ["revision", "persistence", "goal", "turns", "note"],
             additionalProperties: false,
           },
           waits: {
             type: "object",
             properties: { redact: wait, shield: wait, guard: wait },
             required: ["redact", "shield", "guard"],
+            additionalProperties: false,
+          },
+          // Your own turns: whether the router routes them, the tier it moved them to, and the model you picked when
+          // that paused it.
+          turns: {
+            type: "object",
+            properties: {
+              on: { type: "boolean" },
+              model: { type: "string" },
+              paused: { type: "string" },
+            },
+            required: ["on"],
             additionalProperties: false,
           },
           calibration: {
@@ -228,6 +254,7 @@ export const Vsr = Rpc.define({
           "feedback",
           "apps",
           "controls",
+          "turns",
           "waits",
           "calibration",
           "runtime",
@@ -474,6 +501,7 @@ export const Vsr = Rpc.define({
             additionalProperties: false,
           },
           goal: { enum: ["balanced", "quality", "save"] },
+          turns: { type: "boolean" },
           follow: { const: true },
         },
         required: ["instanceID", "expectedRevision"],

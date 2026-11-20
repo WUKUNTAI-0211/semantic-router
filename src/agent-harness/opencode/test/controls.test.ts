@@ -117,3 +117,91 @@ test("explicit configured-default changes supersede saved overrides", async () =
   assert.equal(edited.apps.check, false);
   assert.equal(edited.apps.shield, false);
 });
+test("turns are saved beside the controls, kept the person's, and an option naming them wins", async () => {
+  const config = parseSettings({});
+  let saved: Record<string, unknown> = {};
+  const pinned: unknown[] = [];
+  const controls = new Controls(
+    config,
+    "instance",
+    async (value) => {
+      saved = value as never;
+    },
+    () => {},
+    (values) => pinned.push(values),
+  );
+  assert.equal(controls.state().turns, false);
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "instance",
+      expectedRevision: 0,
+      turns: true,
+      goal: "save",
+    }),
+    { saved: true, revision: 1 },
+  );
+  assert.equal(config.routing.turns, true);
+  assert.equal(saved.turns, true);
+  assert.deepEqual(saved.pinned, ["goal", "turns"]);
+  assert.deepEqual(pinned.at(-1), { goal: "save", turns: true });
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "instance",
+      expectedRevision: 1,
+      turns: "yes",
+    }),
+    { saved: false, reason: "invalid" },
+  );
+
+  // Controls saved before turns existed still load, and turns stay off.
+  const { turns: _, ...older } = saved;
+  const before = parseSettings({});
+  await new Controls(
+    before,
+    "i",
+    async () => {},
+    () => {},
+  ).load(async () => older);
+  assert.equal(before.routing.goal, "save");
+  assert.equal(before.routing.turns, false);
+
+  const reloaded = parseSettings({});
+  await new Controls(
+    reloaded,
+    "i",
+    async () => {},
+    () => {},
+  ).load(async () => saved);
+  assert.equal(reloaded.routing.turns, true);
+  const named = parseSettings({ routing: { turns: false } });
+  await new Controls(
+    named,
+    "i",
+    async () => {},
+    () => {},
+    () => {},
+    async () => {},
+    true,
+  ).load(async () => saved);
+  assert.equal(named.routing.turns, false, "the option the person named wins");
+
+  // Following the listener hands goal and turns back too.
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "instance",
+      expectedRevision: 1,
+      follow: true,
+    }),
+    { saved: true, revision: 2 },
+  );
+  assert.equal(saved.pinned, undefined);
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "instance",
+      expectedRevision: 2,
+      follow: true,
+      turns: true,
+    }),
+    { saved: false, reason: "invalid" },
+  );
+});

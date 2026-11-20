@@ -7,6 +7,8 @@ export interface Tier {
 export interface RoutingSettings {
   tiers: Tier[];
   goal: "balanced" | "quality" | "save";
+  // The router picks the model of your own turns too, as the Claude Code plugin's `routerTurns`. Off by default.
+  turns: boolean;
   easyBelow: number;
   hardFrom: number;
   minConfidence: number;
@@ -22,6 +24,7 @@ export function parseRouting(input: unknown): RoutingSettings {
   const known = [
     "tiers",
     "goal",
+    "turns",
     "easyBelow",
     "hardFrom",
     "minConfidence",
@@ -77,6 +80,8 @@ export function parseRouting(input: unknown): RoutingSettings {
   const goal = options.goal === undefined ? "balanced" : options.goal;
   if (goal !== "balanced" && goal !== "quality" && goal !== "save")
     throw new Error("Invalid routing goal");
+  const turns = options.turns === undefined ? false : options.turns;
+  if (typeof turns !== "boolean") throw new Error("Invalid routing turns");
   const easyBelow = number("easyBelow", 0.65, 2),
     hardFrom = number("hardFrom", 1.5, 2);
   if (easyBelow >= hardFrom)
@@ -87,6 +92,7 @@ export function parseRouting(input: unknown): RoutingSettings {
   return {
     tiers,
     goal,
+    turns,
     easyBelow,
     hardFrom,
     minConfidence: number("minConfidence", 0.5, 1),

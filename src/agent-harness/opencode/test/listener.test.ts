@@ -135,12 +135,21 @@ test("a listing's vsr profile and rules are read field by field, and unreadable 
         redact: true,
         shield: "no",
         router_goal: "save",
+        router_turns: true,
       }),
     ),
     {
       guard: false,
       redact: true,
+      goal: "save",
+      turns: true,
     },
+    "the router's goal and turns too, as the Claude Code plugin reads them",
+  );
+  assert.deepEqual(
+    profileOf(listing({ router_goal: "fast", router_turns: "on" })),
+    {},
+    "a goal it does not know and turns that are not a flag are left to the options",
   );
   assert.deepEqual(rulesOf(listing({})), NO_RULES);
   assert.deepEqual(rulesOf({ data: [] }), NO_RULES);
@@ -206,6 +215,59 @@ test("the profile sets the apps the person did not name, and an outage keeps the
   now = 123_000;
   listener.followLater();
   assert.equal(runtime.calls.listing, 4);
+});
+
+test("the profile sets the router's goal and turns unless the person set them, and says what it changed once", async () => {
+  const settings = parseSettings({ routing: { goal: "quality" } });
+  let listed: Result<unknown> = ok(
+    listing({ redact: false, router_goal: "save", router_turns: true }),
+  );
+  const runtime = fake(
+    () => listed,
+    () => ok({}),
+  );
+  let now = 0;
+  const listener = new Listener(
+    settings,
+    runtime,
+    ["goal"],
+    undefined,
+    () => now,
+  );
+  let noted = 0;
+  listener.noted = () => noted++;
+  await listener.follow();
+  assert.equal(
+    settings.routing.goal,
+    "quality",
+    "a goal named in the options stays",
+  );
+  assert.equal(settings.routing.turns, true);
+  assert.equal(settings.apps.redact, false);
+  assert.equal(listener.note, "vSR follows the listener: redact off, turns on");
+  assert.equal(noted, 1);
+  now = 61_000;
+  await listener.follow();
+  assert.equal(noted, 1, "the same note is not said again");
+
+  // A change in the decision view stays the person's, until it is handed back.
+  listener.pin({ turns: false });
+  now = 122_000;
+  await listener.follow();
+  assert.equal(settings.routing.turns, false);
+  assert.equal(listener.note, "vSR follows the listener: redact off");
+  assert.equal(noted, 2);
+  await listener.unpin();
+  assert.equal(settings.routing.turns, true);
+
+  listed = ok(listing({}));
+  await listener.follow();
+  assert.equal(
+    settings.routing.turns,
+    false,
+    "without a profile, the options again",
+  );
+  assert.equal(listener.note, "");
 });
 
 test("an answer for a new revision reads the listing again and asks once more", async () => {

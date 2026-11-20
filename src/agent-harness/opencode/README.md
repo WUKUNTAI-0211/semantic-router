@@ -159,6 +159,7 @@ model as usual, and `/vsr` closes the panel.
 | `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done  |
 | `/vsr-check`     | Check the decision runtime: one case per enabled app                    |
 | `/vsr-goal`      | Choose the router's goal: balanced, quality or save                     |
+| `/vsr-turns`     | Route your own turns: `on` or `off`; alone, say where they run          |
 | `/vsr-refresh`   | Refresh the panel                                                       |
 | `/vsr-calibrate` | Fit an app's thresholds to your answers                                 |
 | `/vsr-probe`     | Ask the decision model the 30 known cases; say which flipped or drifted |
@@ -192,10 +193,45 @@ model its definition picks. An agent you gave a model keeps it, recorded as
 - When you push back on an answer (escalate), the next subagent goes one tier
   up, never below your session's, and one effort higher.
 
-vSR never changes your session's own model, and picks a subagent's model only
-when the subagent starts. A subagent that names a model, a resumed one, an
-agent with its own model, and a session on a model outside your tiers keep
-their choice.
+Unless [your turns](#your-turns) are on, vSR never changes your session's own
+model, and picks a subagent's model only when the subagent starts. A subagent
+that names a model, a resumed one, an agent with its own model, and a session on
+a model outside your tiers keep their choice.
+
+## Your turns
+
+The router can pick the model of your own turns too, as the Claude Code
+plugin's `/vsr turns on` does: `/vsr-turns on`, `routing.turns` in the options,
+or "routed" on the panel's `your turns` row. It is off by default, since it
+changes the model you picked. The same decision model reads each prompt you
+send, and the turn runs on what it picked:
+
+- Hard prompts go to your strong tier and the rest to the middle one, each at
+  the effort the steps answer gives; a turn that stays on its tier still gets
+  the effort its prompt needs. The light tier runs your turns only with
+  `routing.goal` `save`, or when your session is on it already.
+- A turn keeps its model through all its tool calls, and a prompt you did not
+  type (a command, a continuation) runs where the last one did.
+- A short reply (12 words or fewer, such as `yes, do it`) is read together with
+  the prompt before it and never moves your turns to a smaller model.
+- A move to a smaller model than your session's needs the same confidence as a
+  subagent's, and never happens with `routing.goal` `quality`.
+- A move to a smaller model writes the whole conversation to that model's
+  prompt cache once. vSR prices that write against what three turns like the
+  last one would save there, from OpenCode's model prices, and waits while it
+  costs more: the turn is `kept` with reason `cache`, and its card says
+  `would re-read 103K tokens uncached: $0.24, 3 turns save $0.06`. Once the
+  conversation sat idle past the cache's five minutes, nothing warm is lost and
+  the move goes ahead.
+- A pushback moves the turn one tier up from where the last one ran, one effort
+  level above what it ran at, instead of the next subagent.
+- A model you pick yourself pauses this: your turns stay on it until
+  `/vsr-turns on`, and a toast says so. `/vsr-turns off`, or turning the router
+  off, puts your next turn back on the model you picked.
+
+The panel's `your turns` row says where your turns run, `/vsr-turns` says it
+too, and each move is a `routed` router decision for your prompt. Behind a
+Router gateway that already routes each call, leave this off.
 
 ## Guard
 
@@ -323,10 +359,14 @@ listener's listing (`GET /v1/systemone/models`) at the first prompt, and again
 at a prompt a minute or more later. Its `vsr` profile (`apis.systemone.vsr` in
 the Router's config, or Default, On or Off in the Dashboard under Config ›
 Global Config › vSR agent plugins) turns each app on or off for every plugin
-pointed at it. An app you name under `apps` in the options, or turn on or off
-with `/vsr-apps`, stays yours; the listener sets the others. "Follow the Router
-listener" in `/vsr-apps` hands the apps you changed there back to the listener. A plain
-decision runtime sets nothing.
+pointed at it, and its `router_goal` and `router_turns` set the router's goal
+and [your turns](#your-turns), the same eight fields the Claude Code plugin
+reads. What you name in the options (an app under `apps`, `routing.goal`,
+`routing.turns`) or change in vSR (`/vsr-apps`, `/vsr-goal`, `/vsr-turns`, the
+panel) stays yours; the listener sets the rest, and a toast says what it changed
+(`vSR follows the listener: redact off, goal save, turns on`). "Follow the
+Router listener" in `/vsr-apps` hands what you changed back to the listener. A
+plain decision runtime sets nothing.
 
 Rules the listener binds to guard and redact (`vsr.rules`) come with the same
 listing, and the listener checks them beside the decision model's questions,
@@ -355,8 +395,9 @@ panel or returned by the plugin.
 
 ## How it differs from Claude Code
 
-- **Your session's model never changes.** The Claude Code plugin can also route
-  your own turns; here the router picks subagents' models only.
+- **Your turns move by switching the session's model.** OpenCode has no
+  per-request model override for a plugin, so a routed turn switches your
+  session to the tier, and switches it back when you turn this off.
 - **Your tiers, your provider.** Instead of Haiku, Sonnet and Opus, the router
   uses the three models you list, and only when your session runs on one of
   them.
@@ -381,6 +422,7 @@ Every option is optional. An unknown option is an error, not ignored.
 | `waits.redact`, `waits.shield`, `waits.guard`          | `3000`, `2000`, `3000`               | How long each waits: `1000`, `2000`, `3000` milliseconds, or `"done"`          |
 | `routing.tiers`                                        | none                                 | Three `{ "model": "provider/model" }`, lightest first, with optional `efforts` |
 | `routing.goal`                                         | `"balanced"`                         | `"quality"` never routes lighter, `"save"` routes lighter whenever it can      |
+| `routing.turns`                                        | `false`                              | Route your own turns too, as `/vsr-turns on` does                              |
 | `routing.easyBelow`, `routing.hardFrom`                | `0.65`, `1.5`                        | The difficulty (0 to 2) under which a task is easy, and from which it is hard  |
 | `routing.minConfidence`, `routing.downgradeConfidence` | `0.5`, `0.6`                         | The confidence to route at all, and to route lighter than your session         |
 | `routing.feedbackThreshold`, `routing.repeatThreshold` | `0.7`, `0.8`                         | Escalate's lines for "that's wrong" and "again"                                |

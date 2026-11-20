@@ -57,6 +57,11 @@ const WAIT_CHOICES = [1000, 2000, 3000, "done"] as const;
 const waitWords = (wait: Wait) =>
   wait === "done" ? "until done" : `${wait / 1000}s`;
 const GOALS = ["balanced", "quality", "save"] as const;
+// The Claude Code plugin's words for where your turns run.
+const turnsWords = (on: boolean, now = false) =>
+  on
+    ? `vSR: the router picks the model of your turns${now ? " from now on" : ""}.`
+    : "vSR: your turns run on the model you picked.";
 const Span = (props: { fg?: unknown; bg?: unknown; children: JSX.Element }) => (
   <span
     style={
@@ -128,6 +133,26 @@ export default Plugin.define({
         : undefined;
     };
     const total = () => summary(current()?.decisions ?? []);
+    // What a Router listener's profile changes, said once in a toast when it is new, as the Claude Code plugin says it.
+    let noted = "";
+    createEffect(() => {
+      const note = current()?.controls.note;
+      if (note === undefined || note === noted) return;
+      noted = note;
+      if (note) ctx.ui.toast.show({ message: note, variant: "info" });
+    });
+    // A model you picked yourself pauses the routing of your turns: said once, as the Claude Code plugin says it.
+    let paused: string | undefined;
+    createEffect(() => {
+      const now = current()?.turns.paused;
+      if (now === paused) return;
+      paused = now;
+      if (now)
+        ctx.ui.toast.show({
+          message: `vSR router: you picked ${now}, so your turns stay on it · /vsr-turns on routes them again`,
+          variant: "info",
+        });
+    });
     // `/vsr-apps`: the apps as switches, in the pane's order, each press applied at once as a click on the pane's
     // controls is; the last row hands the apps back to a Router listener. Esc closes it.
     function apps() {
@@ -878,6 +903,40 @@ export default Plugin.define({
           },
         },
         {
+          id: "vsr.turns",
+          title: "vSR route your own turns: on or off",
+          slash: { name: "vsr-turns", arguments: true },
+          palette: true,
+          run: async (input?: string) => {
+            const snapshot = current();
+            if (!snapshot) return;
+            // The raw input may hold the command itself before its word.
+            const asked = (input ?? "")
+              .trim()
+              .split(/\s+/)
+              .pop()
+              ?.toLowerCase();
+            const say = (message: string) => ctx.ui.toast.show({ message });
+            // As the Claude Code plugin's `/vsr turns [on|off]`: without a word it says where your turns run.
+            if (asked !== "on" && asked !== "off") {
+              say(
+                snapshot.turns.paused
+                  ? `vSR: paused · you picked ${snapshot.turns.paused} · /vsr-turns on routes your turns again.`
+                  : snapshot.turns.on && snapshot.turns.model
+                    ? `vSR: your turns run on ${snapshot.turns.model}, picked by the router.`
+                    : turnsWords(snapshot.controls.turns),
+              );
+              return;
+            }
+            if (asked === "on" && !snapshot.apps.router) {
+              say("vSR: turn on the router first, in /vsr-apps or the panel.");
+              return;
+            }
+            if (await controller.change({ turns: asked === "on" }))
+              say(turnsWords(asked === "on", true));
+          },
+        },
+        {
           id: "vsr.calibrate",
           title: "vSR calibrate thresholds from your answers",
           slash: { name: "vsr-calibrate" },
@@ -1379,6 +1438,44 @@ export default Plugin.define({
                             )}
                           </text>
                         ))}
+                      </box>
+                      {/* Your own turns, as the Claude Code plugin's pane row: off leaves them on the model you picked. */}
+                      <box flexDirection="row">
+                        <text
+                          fg={tone(snapshot().apps.router ? "text" : "muted")}
+                        >
+                          {"your turns".padEnd(CONTROL_LABEL)}
+                        </text>
+                        {([false, true] as const).map((turns) => (
+                          <text
+                            marginRight={1}
+                            onMouseUp={() => void controller.change({ turns })}
+                          >
+                            {snapshot().controls.turns === turns ? (
+                              <Span
+                                bg={tone(
+                                  snapshot().apps.router
+                                    ? APP_LOOK.router.tone
+                                    : "muted",
+                                )}
+                                fg={tone("background")}
+                              >
+                                {` ${turns ? "routed" : "yours"} `}
+                              </Span>
+                            ) : (
+                              <Span fg={tone("muted")}>
+                                {` ${turns ? "routed" : "yours"} `}
+                              </Span>
+                            )}
+                          </text>
+                        ))}
+                        <text fg={tone("muted")}>
+                          {snapshot().turns.paused
+                            ? ` paused · you picked ${snapshot().turns.paused}`
+                            : snapshot().turns.on
+                              ? ` on ${snapshot().turns.model ?? "your model"}`
+                              : ""}
+                        </text>
                       </box>
                     </box>
                     <text flexShrink={0} marginTop={1}>

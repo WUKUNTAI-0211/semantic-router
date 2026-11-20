@@ -78,6 +78,21 @@ export class Routing {
       session.prompts.delete(oldest);
     }
   }
+  // Whether a prompt pushed back on the last answer, asked as the prompt is sent when your turns are routed. The turn
+  // climbs then, so the pushback is claimed and no subagent of the turn climbs again for it.
+  async pushback(sessionID: string, messageID: string): Promise<boolean> {
+    const session = this.session(sessionID);
+    const prompt = session.prompts.get(messageID);
+    if (!prompt) return false;
+    if (!prompt.checked) {
+      const prior = session.prior;
+      session.prior = prompt.text;
+      prompt.checked = this.checkPrompt(sessionID, prompt, prior);
+    }
+    const escalated = await prompt.checked;
+    if (escalated) prompt.claimed = true;
+    return escalated;
+  }
   async activate(
     sessionID: string,
     messageID: string | undefined,

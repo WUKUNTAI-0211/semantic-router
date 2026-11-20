@@ -7,6 +7,7 @@ import { Routing, RECHECK } from "./routing.ts";
 import { fullModel } from "./routing-policy.ts";
 import type { DecisionStore } from "./decisions.ts";
 import type { RuntimeClient } from "./runtime.ts";
+import type { Turns } from "./turns.ts";
 
 export async function registerRouting(
   ctx: Plugin.Context,
@@ -14,6 +15,7 @@ export async function registerRouting(
   runtime: RuntimeClient,
   decisions: DecisionStore,
   notify: (sessionID: string) => Promise<void>,
+  turns?: Turns,
 ): Promise<() => void> {
   const routing = new Routing(settings, runtime, (input) => {
     const decision = decisions.record(input);
@@ -83,9 +85,26 @@ export async function registerRouting(
         "session.execution.failed",
         "session.execution.interrupted",
         "session.deleted",
+        "session.model.selected",
+        "session.step.ended",
       ],
     })) {
+      if (event.type === "session.model.selected") {
+        turns?.picked(event.data.sessionID, event.data.model);
+        continue;
+      }
+      if (event.type === "session.step.ended") {
+        const tokens = event.data.tokens;
+        turns?.stepped(event.data.sessionID, {
+          input: tokens.input,
+          output: tokens.output,
+          cacheRead: tokens.cache.read,
+          cacheWrite: tokens.cache.write,
+        });
+        continue;
+      }
       if (event.type === "session.deleted") {
+        turns?.remove(event.data.sessionID);
         routing.remove(event.data.sessionID);
         decisions.remove(event.data.sessionID);
         for (const [id, selected] of children)
@@ -102,14 +121,18 @@ export async function registerRouting(
     }
   })().catch(() => {});
   await ctx.session.hook("prompt", async (event) => {
-    if (
-      (!settings.apps.router && !settings.apps.escalate) ||
-      !settings.routing.tiers.length
-    )
-      return;
+    if (!settings.routing.tiers.length) return;
     const session = await ctx.session.get({ sessionID: event.sessionID });
-    if (!session.parentID)
+    if (session.parentID) return;
+    if (settings.apps.router || settings.apps.escalate)
       routing.admit(event.sessionID, event.messageID, event.prompt.text);
+    // Your own turn: the router moves it before it starts when your turns are routed, and back to your model when
+    // they no longer are.
+    await turns
+      ?.prompt(event.sessionID, event.messageID, event.prompt.text, () =>
+        routing.pushback(event.sessionID, event.messageID),
+      )
+      .catch(() => {});
   });
   await ctx.session.hook("context", async (event) => {
     const lastUser = event.messages.findLast(

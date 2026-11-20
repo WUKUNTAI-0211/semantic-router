@@ -33,8 +33,15 @@ const snapshot = (
   revision,
   apps: { ...config.apps },
   waits: { ...config.waits },
-  controls: { revision: 0, persistence: "durable", goal: "balanced" },
+  controls: {
+    revision: 0,
+    persistence: "durable",
+    goal: "balanced",
+    turns: false,
+    note: "",
+  },
   calibration: { since: 0, remind: false },
+  turns: { on: false },
   runtime: { reachable: null, retryAt: 0, models: [], source: "options" },
 });
 const deferred = <T>() => {

@@ -18,7 +18,12 @@ export interface Request {
 }
 export const secret = ["SYNTHETIC", "12345678", "SECRET"].join("");
 export const email = "alice@example.test";
-export async function fixture(t: TestContext, strict = false) {
+// `vsr`, when given, is a Router listener's profile beside the models in its listing.
+export async function fixture(
+  t: TestContext,
+  strict = false,
+  vsr?: Record<string, unknown>,
+) {
   const requests: Request[] = [],
     states: string[] = [],
     asked: { host?: string; authorization?: string }[] = [];
@@ -35,6 +40,7 @@ export async function fixture(t: TestContext, strict = false) {
           data: [
             { id: "fixture", question_types: ["noul", "choice", "score"] },
           ],
+          ...(vsr ? { vsr } : {}),
         }),
       );
       return;

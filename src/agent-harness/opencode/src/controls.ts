@@ -1,15 +1,19 @@
+import { FIELDS } from "./listener.ts";
+import type { Field, Values as Fields } from "./listener.ts";
 import { APPS, isRecord, parseSettings } from "./settings.ts";
-import type { App, Settings } from "./settings.ts";
+import type { Settings } from "./settings.ts";
 
 type Values = Pick<Settings, "apps" | "waits"> & {
   goal: Settings["routing"]["goal"];
 };
-// `pinned` names the apps the person changed here: a Router listener's profile leaves those alone.
+// `pinned` names what the person changed here: a Router listener's profile leaves those alone. `turns` is kept beside
+// the rest and out of `base`, so the controls saved before it existed still load; an option that names it wins.
 type Saved = Values & {
   version: 1;
   base: string;
   revision: number;
-  pinned?: App[];
+  pinned?: Field[];
+  turns?: boolean;
 };
 export type ControlResult =
   | { saved: true; revision: number }
@@ -24,17 +28,23 @@ export class Controls {
   private closed = false;
   private revision = 0;
   private persistence: "durable" | "unavailable" = "durable";
-  private pinned: App[] = [];
-  private readonly pin: (apps: Partial<Record<App, boolean>>) => void;
+  private pinned: Field[] = [];
+  private readonly pin: (values: Partial<Fields>) => void;
+  // Whether the plugin options name routing.turns: then the saved choice does not override them.
+  private readonly turnsNamed: boolean;
+  // Told when the person turns the routing of their turns on or off, a repeat of the same choice included.
+  turned: (on: boolean) => void = () => {};
   private readonly unpin: () => Promise<void>;
   constructor(
     settings: Settings,
     instanceID: string,
     persist: (value: Saved) => Promise<void>,
     changed: () => void,
-    pin: (apps: Partial<Record<App, boolean>>) => void = () => {},
+    pin: (values: Partial<Fields>) => void = () => {},
     unpin: () => Promise<void> = async () => {},
+    turnsNamed = false,
   ) {
+    this.turnsNamed = turnsNamed;
     this.settings = settings;
     this.instanceID = instanceID;
     this.persist = persist;
@@ -55,6 +65,7 @@ export class Controls {
       revision: this.revision,
       persistence: this.persistence,
       goal: this.settings.routing.goal,
+      turns: this.settings.routing.turns,
     };
   }
   private parse(input: Record<string, unknown>): Values {
@@ -84,12 +95,14 @@ export class Controls {
     });
     return { apps: next.apps, waits: next.waits, goal: next.routing.goal };
   }
-  private assign(value: Values): void {
+  private assign(value: Values, turns = this.settings.routing.turns): void {
     Object.assign(this.settings.apps, value.apps);
     Object.assign(this.settings.waits, value.waits);
     this.settings.routing.goal = value.goal;
+    this.settings.routing.turns = turns;
+    const fields: Fields = { ...value.apps, goal: value.goal, turns };
     this.pin(
-      Object.fromEntries(this.pinned.map((app) => [app, value.apps[app]])),
+      Object.fromEntries(this.pinned.map((field) => [field, fields[field]])),
     );
   }
   async load(read: () => Promise<unknown>): Promise<void> {
@@ -114,13 +127,19 @@ export class Controls {
         (saved.revision as number) < 0 ||
         (saved.pinned !== undefined &&
           (!Array.isArray(saved.pinned) ||
-            saved.pinned.some((app) => !APPS.includes(app as App))))
+            saved.pinned.some((field) => !FIELDS.includes(field as Field)))) ||
+        (saved.turns !== undefined && typeof saved.turns !== "boolean")
       )
         throw new Error("Invalid saved controls");
       if (saved.base !== this.base) return; // Explicit changes to configured defaults win.
       const value = this.parse(saved);
-      this.pinned = (saved.pinned as App[] | undefined) ?? [];
-      this.assign(value);
+      this.pinned = (saved.pinned as Field[] | undefined) ?? [];
+      this.assign(
+        value,
+        typeof saved.turns === "boolean" && !this.turnsNamed
+          ? saved.turns
+          : this.settings.routing.turns,
+      );
       this.revision = saved.revision as number;
     } catch {
       this.persistence = "unavailable";
@@ -139,14 +158,19 @@ export class Controls {
               "apps",
               "waits",
               "goal",
+              "turns",
               "follow",
             ].includes(key),
         ) ||
-        !["apps", "waits", "goal", "follow"].some((key) =>
+        !["apps", "waits", "goal", "turns", "follow"].some((key) =>
           Object.hasOwn(input, key),
         ) ||
+        (input.turns !== undefined && typeof input.turns !== "boolean") ||
         (input.follow !== undefined &&
-          (input.follow !== true || input.apps !== undefined))
+          (input.follow !== true ||
+            input.apps !== undefined ||
+            input.goal !== undefined ||
+            input.turns !== undefined))
       )
         return { saved: false, reason: "invalid" };
       if (
@@ -161,13 +185,19 @@ export class Controls {
         return { saved: false, reason: "invalid" };
       }
       const revision = this.revision + 1;
-      // `follow` hands every app changed here back to a Router listener's profile.
+      // `follow` hands everything changed here back to a Router listener's profile.
+      const turns =
+        typeof input.turns === "boolean"
+          ? input.turns
+          : this.settings.routing.turns;
       const pinned = input.follow
         ? []
-        : APPS.filter(
-            (app) =>
-              this.pinned.includes(app) ||
-              (isRecord(input.apps) && Object.hasOwn(input.apps, app)),
+        : FIELDS.filter(
+            (field) =>
+              this.pinned.includes(field) ||
+              (isRecord(input.apps) && Object.hasOwn(input.apps, field)) ||
+              (field === "goal" && input.goal !== undefined) ||
+              (field === "turns" && input.turns !== undefined),
           );
       try {
         await this.persist({
@@ -176,16 +206,18 @@ export class Controls {
           base: this.base,
           revision,
           ...(pinned.length ? { pinned } : {}),
+          turns,
         });
       } catch {
         this.persistence = "unavailable";
         return { saved: false, reason: "storage" };
       }
       this.pinned = pinned;
-      this.assign(next);
+      this.assign(next, turns);
       this.revision = revision;
       this.persistence = "durable";
       if (input.follow) await this.unpin().catch(() => {});
+      if (typeof input.turns === "boolean") this.turned(input.turns);
       this.changed();
       return { saved: true, revision };
     };

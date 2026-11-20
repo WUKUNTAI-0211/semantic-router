@@ -14,7 +14,12 @@ interface Request {
   tools?: unknown[];
   reasoning_effort?: string;
 }
-async function fixture(t: TestContext, agentModel = false, priced = false) {
+async function fixture(
+  t: TestContext,
+  agentModel = false,
+  priced = false,
+  turns = false,
+) {
   const requests: Request[] = [],
     classifications: Record<string, unknown>[] = [];
   let retried = false;
@@ -58,7 +63,10 @@ async function fixture(t: TestContext, agentModel = false, priced = false) {
               ? { reask: { noul: 0.01 } }
               : {
                   complexity: {
-                    score: 0.1,
+                    // A HARDTURN prompt is hard; every other task is easy.
+                    score: JSON.stringify(body.state).includes("HARDTURN")
+                      ? 1.8
+                      : 0.1,
                     confidence: JSON.stringify(body.state).includes("LOWCONF")
                       ? 0.1
                       : 0.98,
@@ -190,7 +198,7 @@ async function fixture(t: TestContext, agentModel = false, priced = false) {
       : {}),
     pluginOptions: {
       runtimeUrl: `http://127.0.0.1:${address.port}/v1/decisions`,
-      routing: { tiers },
+      routing: { tiers, ...(turns ? { turns: true } : {}) },
     },
     providers: {
       fixture: {
@@ -500,5 +508,67 @@ test(
     assert.equal(after.decisions[0]?.costKnown, true);
     assert.equal(after.decisions[0]?.childOutcome, "succeeded");
     assert.ok((after.decisions[0]?.usage?.cost ?? 0) > 0);
+  },
+);
+
+test(
+  "your own turns run on the tier the router picks, and a pushback climbs the turn itself",
+  { timeout: 120000 },
+  async (t) => {
+    const native = await fixture(t, false, false, true);
+    // Prompts sent as the TUI sends them: `opencode run --model` would pick the model itself, which pauses the router.
+    const created = (await native.api("/api/session", {
+      model: { providerID: "fixture", id: "middle", variant: "medium" },
+      permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    })) as { data: { id: string } };
+    const id = created.data.id;
+    const send = async (text: string) => {
+      const from = native.requests.length;
+      await native.api(`/api/session/${id}/prompt`, { text });
+      await native.api(
+        `/api/experimental/session/${id}/wait`,
+        undefined,
+        "POST",
+      );
+      return native.requests
+        .slice(from)
+        .filter((request) => request.tools?.length)
+        .map((request) => `${request.model}#${request.reasoning_effort}`);
+    };
+    const hard = await send(
+      "HARDTURN prove the parser terminates on every input and design its invariants",
+    );
+    // The fixture's steps answer is a few steps: the lowest effort.
+    assert.deepEqual(hard, ["strong#low"], "the turn ran on the strong tier");
+    const snapshot = async () =>
+      (await native.rpc("snapshot", { sessionID: id })) as Snapshot & {
+        turns: { on: boolean; model?: string; paused?: string };
+      };
+    const routed = (await snapshot()).decisions.find(
+      (decision) => decision.scope === "turn",
+    );
+    assert.equal(routed?.outcome, "routed");
+    assert.equal(routed?.model, "fixture/strong#low");
+    assert.deepEqual((await snapshot()).turns, {
+      on: true,
+      model: "fixture/strong#low",
+    });
+    // An easy prompt after it: a move down needs a warm cache weighed, a short follow-up never moves down.
+    const short = await send("ok thanks");
+    assert.deepEqual(short, ["strong#low"], "a short reply keeps the tier");
+    const pushed = await send(
+      "PUSH that was wrong, fix the invariant proof now",
+    );
+    assert.deepEqual(
+      pushed,
+      ["strong#medium"],
+      "a pushback climbs one effort on the strong tier",
+    );
+    assert.equal(
+      (await snapshot()).decisions
+        .filter((decision) => decision.scope === "turn")
+        .at(-1)?.reason,
+      "pushback",
+    );
   },
 );

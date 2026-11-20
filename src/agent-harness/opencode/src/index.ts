@@ -1,4 +1,7 @@
 import { registerRouting } from "./routing-hooks.ts";
+import { Turns } from "./turns.ts";
+import type { Price } from "./turns.ts";
+import { knownPrices } from "./prices.ts";
 import { SessionArchive } from "./archive.ts";
 import { registerGuard } from "./guard-hooks.ts";
 import { registerCheck } from "./check-hooks.ts";
@@ -45,10 +48,21 @@ export default Plugin.define({
     const settings = parseSettings(ctx.options);
     const runtime = new RuntimeClient(settings);
     const named = isRecord(ctx.options) ? ctx.options.apps : undefined;
+    const routingNamed =
+      isRecord(ctx.options) && isRecord(ctx.options.routing)
+        ? ctx.options.routing
+        : {};
+    // What the plugin options name stays the person's: a Router listener's profile does not change it.
     const listener = new Listener(
       settings,
       runtime,
-      isRecord(named) ? APPS.filter((app) => named[app] !== undefined) : [],
+      [
+        ...(isRecord(named)
+          ? APPS.filter((app) => named[app] !== undefined)
+          : []),
+        ...(routingNamed.goal !== undefined ? (["goal"] as const) : []),
+        ...(routingNamed.turns !== undefined ? (["turns"] as const) : []),
+      ],
       {
         get: (key) => ctx.storage.get(key),
         set: (key, value) => ctx.storage.set(key, value),
@@ -177,10 +191,43 @@ export default Plugin.define({
       decisions.snapshot("").instanceID,
       (value) => ctx.storage.set("controls.v1", value),
       () => decisions.changed(),
-      (apps) => listener.pin(apps),
+      (values) => listener.pin(values),
       () => listener.unpin(),
+      routingNamed.turns !== undefined,
     );
     await controls.load(() => ctx.storage.get("controls.v1"));
+    // Your own turns, routed when `routing.turns` is on; the view reads where they run.
+    const turns = new Turns(
+      settings,
+      runtime,
+      (input) => decisions.record(input).id,
+      {
+        modelOf: async (sessionID) =>
+          (await ctx.session.get({ sessionID })).model ?? undefined,
+        switchModel: async (sessionID, model) =>
+          void (await ctx.session.switchModel({ sessionID, model })),
+        prices: async () => {
+          const prices = new Map<string, Price>();
+          for (const model of (await ctx.model.list()).data) {
+            const price = model.cost?.[0];
+            if (price && knownPrices(model.cost))
+              prices.set(`${model.providerID}/${model.id}`, {
+                input: price.input,
+                output: price.output,
+                cacheRead: price.cache?.read ?? 0,
+                cacheWrite: price.cache?.write ?? 0,
+              });
+          }
+          return prices;
+        },
+      },
+    );
+    turns.changed = () => decisions.changed();
+    // `/vsr-turns on` after you picked a model yourself: your turns follow the router again.
+    controls.turned = (on) => {
+      if (on) turns.resume();
+    };
+    listener.noted = () => decisions.changed();
     const registration = await ctx.rpc.register(Vsr, {
       snapshot: async (input) => {
         const found = decisions.snapshot(sessionID(input));
@@ -192,7 +239,8 @@ export default Plugin.define({
             .map((decision) => decision.id),
           apps: { ...settings.apps },
           waits: { ...settings.waits },
-          controls: controls.state(),
+          controls: { ...controls.state(), note: listener.note },
+          turns: turns.view(sessionID(input)),
           calibration: calibrationState(),
           runtime: runtime.status(),
         };
@@ -415,6 +463,7 @@ export default Plugin.define({
       runtime,
       decisions,
       notify,
+      turns,
     );
     const closeGuard = await registerGuard(
       ctx,
