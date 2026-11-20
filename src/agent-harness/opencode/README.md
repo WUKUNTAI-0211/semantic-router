@@ -184,13 +184,17 @@ model its definition picks. An agent you gave a model keeps it, recorded as
 `kept`.
 
 - Easy tasks go to your light tier, hard ones to your strong tier, the rest to
-  the middle. With `efforts` on a tier, the effort follows the steps answer.
+  the middle. With `efforts` on a tier, the effort follows the steps answer on
+  its own lines: under the few-steps line (0.5) the tier's lowest effort, from
+  the many-steps line (1.2) its highest, the middle between, and the middle when
+  the answer is under the steps confidence line (0.3).
 - A tier lighter than your session's is used only when the decision model is
-  sure (confidence 0.6 or more); below 0.5 the subagent keeps your session's
+  sure (confidence 0.6 or more); below 0.3 the subagent keeps your session's
   model. `routing.goal` changes this: `quality` never uses a lighter tier,
   `balanced` is the default, `save` uses one whenever the answer is clear enough
-  to route at all. Both lines are in `/vsr-config`: the router's confidence line
-  (0.5) and its smaller-model line (0.6, `routing.downgradeConfidence`).
+  to route at all. These lines are in `/vsr-config`: the router's confidence
+  line (0.3), its smaller-model line (0.6, `routing.downgradeConfidence`) and
+  the steps answer's three. Every default is the Claude Code plugin's.
 - When you push back on an answer (escalate), the next subagent goes one tier
   up, never below your session's, and one effort higher.
 
@@ -284,7 +288,7 @@ part of a long output they could not read in that time goes on with a note
 
 Check is off by default because it is slow without a GPU: it reads the answer
 and what the model read that turn, each up to 8,000 characters, and a CPU
-runtime takes several seconds for a long answer, past check's 1.5 s limit. Past
+runtime takes several seconds for a long answer, past check's 3 s limit. Past
 the limit it steps aside (`skipped`); it never holds the agent up and never
 changes the answer. Turn it on in the panel, `/vsr-config` or `apps.check` when the runtime has a
 GPU.
@@ -423,14 +427,16 @@ Every option is optional. An unknown option is an error, not ignored.
 | `routing.tiers`                                        | none                                 | Three `{ "model": "provider/model" }`, lightest first, with optional `efforts` |
 | `routing.goal`                                         | `"balanced"`                         | `"quality"` never routes lighter, `"save"` routes lighter whenever it can      |
 | `routing.turns`                                        | `false`                              | Route your own turns too, as "routed" on the panel does                        |
-| `routing.easyBelow`, `routing.hardFrom`                | `0.65`, `1.5`                        | The difficulty (0 to 2) under which a task is easy, and from which it is hard  |
-| `routing.minConfidence`, `routing.downgradeConfidence` | `0.5`, `0.6`                         | The confidence to route at all, and to route lighter than your session         |
-| `routing.feedbackThreshold`, `routing.repeatThreshold` | `0.7`, `0.8`                         | Escalate's lines for "that's wrong" and "again"                                |
+| `routing.easyBelow`, `routing.hardFrom`                | `0.5`, `1.5`                         | The difficulty (0 to 2) under which a task is easy, and from which it is hard  |
+| `routing.minConfidence`, `routing.downgradeConfidence` | `0.3`, `0.6`                         | The confidence to route at all, and to route lighter than your session         |
+| `routing.stepsLow`, `routing.stepsHigh`                | `0.5`, `1.2`                         | The steps (0 to 2) under which a tier's lowest effort, from which its highest  |
+| `routing.stepsMinConfidence`                           | `0.3`                                | The confidence the steps answer needs to set the effort                        |
+| `routing.feedbackThreshold`, `routing.repeatThreshold` | `0.8`, `0.75`                        | Escalate's lines for "that's wrong" and "again"                                |
 | `routing.deadlineMs`                                   | `1500`                               | The router's wait                                                              |
 | `guard.reviewThreshold`                                | `0.9`                                | The score that holds a command                                                 |
 | `redact.piiThreshold`                                  | `0.7`                                | The score that hides a span of personal data                                   |
 | `shield.injectionThreshold`                            | `0.9`                                | The score that marks an output as instructions                                 |
-| `check.unsupportedThreshold`, `check.deadlineMs`       | `0.5`, `1500`                        | The score that marks an answer unverified, and check's wait (at most 10000)    |
+| `check.unsupportedThreshold`, `check.deadlineMs`       | `0.5`, `3000`                        | The score that marks an answer unverified, and check's wait (at most 10000)    |
 | `maxDecisions`, `maxSessions`                          | `500`, `64`                          | How many decisions per session, and sessions, the panel keeps                  |
 | `calibrateEvery`                                       | `200`                                | Decisions since the last calibration before the panel suggests one; `0` is off |
 

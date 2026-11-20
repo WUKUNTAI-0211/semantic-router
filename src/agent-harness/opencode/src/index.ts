@@ -199,6 +199,9 @@ export default Plugin.define({
         calibrateEvery:
           isRecord(ctx.options) && ctx.options.calibrateEvery !== undefined,
         downgradeConfidence: routingNamed.downgradeConfidence !== undefined,
+        stepsLow: routingNamed.stepsLow !== undefined,
+        stepsHigh: routingNamed.stepsHigh !== undefined,
+        stepsMinConfidence: routingNamed.stepsMinConfidence !== undefined,
       },
     );
     await controls.load(() => ctx.storage.get("controls.v1"));

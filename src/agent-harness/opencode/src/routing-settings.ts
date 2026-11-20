@@ -13,6 +13,12 @@ export interface RoutingSettings {
   hardFrom: number;
   minConfidence: number;
   downgradeConfidence: number;
+  // The steps answer's lines, as the Claude Code plugin's routerStepsLow, routerStepsHigh and routerStepsMinConfidence:
+  // below `stepsLow` a tier's lowest effort, from `stepsHigh` its highest, the middle between; under
+  // `stepsMinConfidence` the answer is not acted on and the middle effort is used.
+  stepsLow: number;
+  stepsHigh: number;
+  stepsMinConfidence: number;
   feedbackThreshold: number;
   repeatThreshold: number;
   deadlineMs: number;
@@ -29,6 +35,9 @@ export function parseRouting(input: unknown): RoutingSettings {
     "hardFrom",
     "minConfidence",
     "downgradeConfidence",
+    "stepsLow",
+    "stepsHigh",
+    "stepsMinConfidence",
     "feedbackThreshold",
     "repeatThreshold",
     "deadlineMs",
@@ -82,10 +91,15 @@ export function parseRouting(input: unknown): RoutingSettings {
     throw new Error("Invalid routing goal");
   const turns = options.turns === undefined ? false : options.turns;
   if (typeof turns !== "boolean") throw new Error("Invalid routing turns");
-  const easyBelow = number("easyBelow", 0.65, 2),
+  // Defaults are the Claude Code plugin's (plugin.json userConfig), measured on vela3-lite.
+  const easyBelow = number("easyBelow", 0.5, 2),
     hardFrom = number("hardFrom", 1.5, 2);
   if (easyBelow >= hardFrom)
     throw new Error("Routing difficulty boundaries must increase");
+  const stepsLow = number("stepsLow", 0.5, 2),
+    stepsHigh = number("stepsHigh", 1.2, 2);
+  if (stepsLow >= stepsHigh)
+    throw new Error("Routing steps boundaries must increase");
   const deadlineMs = number("deadlineMs", 1500, 10000);
   if (!Number.isInteger(deadlineMs) || deadlineMs < 1)
     throw new Error("Invalid routing deadlineMs");
@@ -95,10 +109,13 @@ export function parseRouting(input: unknown): RoutingSettings {
     turns,
     easyBelow,
     hardFrom,
-    minConfidence: number("minConfidence", 0.5, 1),
+    minConfidence: number("minConfidence", 0.3, 1),
     downgradeConfidence: number("downgradeConfidence", 0.6, 1),
-    feedbackThreshold: number("feedbackThreshold", 0.7, 1),
-    repeatThreshold: number("repeatThreshold", 0.8, 1),
+    stepsLow,
+    stepsHigh,
+    stepsMinConfidence: number("stepsMinConfidence", 0.3, 1),
+    feedbackThreshold: number("feedbackThreshold", 0.8, 1),
+    repeatThreshold: number("repeatThreshold", 0.75, 1),
     deadlineMs,
   };
 }

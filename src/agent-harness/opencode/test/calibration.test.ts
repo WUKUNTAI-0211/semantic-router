@@ -129,7 +129,7 @@ test("only the model's scored calls are learnable, each with the thresholds in u
     features: [0.9, 0.2],
   });
   assert.deepEqual(escalated?.scores, [0.9, 0.2]);
-  assert.deepEqual(escalated?.thresholds, [0.7, 0.8]);
+  assert.deepEqual(escalated?.thresholds, [0.8, 0.75]);
   const routed = of({
     ...base,
     app: "router",
@@ -139,7 +139,7 @@ test("only the model's scored calls are learnable, each with the thresholds in u
     model: "p/light#low",
   });
   assert.equal(routed?.tier, 0);
-  assert.deepEqual(routed?.thresholds, [0.65, 1.5, 0.5]);
+  assert.deepEqual(routed?.thresholds, [0.5, 1.5, 0.3]);
   assert.equal(
     of({
       ...base,

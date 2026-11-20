@@ -128,9 +128,11 @@ agents with their own model and models outside this ladder retain their choices.
 The main session is never changed. A child receives its selection at creation;
 provider retries retain that selection.
 
-Difficulty and reasoning-step scores use a 0–2 scale. Defaults are
-`easyBelow: 0.65`, `hardFrom: 1.5`, `minConfidence: 0.5` and
-`downgradeConfidence: 0.6`. `routing.goal` is `"balanced"`, `"save"` (uses the
+Difficulty and reasoning-step scores use a 0–2 scale. Defaults are the Claude
+Code plugin's (its plugin.json): `easyBelow: 0.5`, `hardFrom: 1.5`,
+`minConfidence: 0.3`, `downgradeConfidence: 0.6`, and the steps answer's own
+lines `stepsLow: 0.5`, `stepsHigh: 1.2`, `stepsMinConfidence: 0.3`, which set the
+effort as its pickEffort does. `routing.goal` is `"balanced"`, `"save"` (uses the
 ordinary confidence threshold for downsizing) or `"quality"` (no downsizing).
 Low confidence, invalid/disabled models or unavailable classification preserve
 the host's original choice. `routing.deadlineMs` defaults to 1500 and includes
@@ -138,8 +140,8 @@ queue time. Tasks over 32,000 UTF-16 code units skip classification.
 
 Escalate classifies admitted human prompts when their turn actually executes.
 Wrong-answer/different-answer probability at least
-`routing.feedbackThreshold: 0.7`, or repeat probability at least
-`routing.repeatThreshold: 0.8`, adds a re-check reminder.
+`routing.feedbackThreshold: 0.8`, or repeat probability at least
+`routing.repeatThreshold: 0.75`, adds a re-check reminder.
 The next eligible child consumes the escalation once, including simultaneous
 launches. Its tier is one above the ordinary pick, capped at the strongest tier
 and never below the parent's tier. Its effort rises one step and, on the same
@@ -255,7 +257,7 @@ background turns cannot provide evidence. Answers shorter than 40 UTF-16 units
 or turns without delivered evidence are not checked. Check does not request
 another generation or silently modify the answer.
 
-`check.deadlineMs` defaults to 1500 ms, including queue time (maximum 10000).
+`check.deadlineMs` defaults to 3000 ms, as the Claude Code plugin's check waits, including queue time (maximum 10000).
 `check.unsupportedThreshold` defaults to 0.5. Scores at or above it mark the
 answer unverified; lower scores mark it verified against supplied evidence,
 not against outside knowledge. Prompt, combined evidence and answer each have

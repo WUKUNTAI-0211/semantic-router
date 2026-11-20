@@ -81,3 +81,53 @@ test("routing requires an ordered same-provider ladder and validates all thresho
   assert.equal(config.routing.goal, "balanced");
   assert.equal(config.routing.deadlineMs, 1500);
 });
+
+test("the defaults are the Claude Code plugin's, as its plugin.json sets them", () => {
+  const defaults = parseSettings({});
+  assert.deepEqual(
+    {
+      easyBelow: defaults.routing.easyBelow,
+      hardFrom: defaults.routing.hardFrom,
+      minConfidence: defaults.routing.minConfidence,
+      downgradeConfidence: defaults.routing.downgradeConfidence,
+      stepsLow: defaults.routing.stepsLow,
+      stepsHigh: defaults.routing.stepsHigh,
+      stepsMinConfidence: defaults.routing.stepsMinConfidence,
+      feedbackThreshold: defaults.routing.feedbackThreshold,
+      repeatThreshold: defaults.routing.repeatThreshold,
+      goal: defaults.routing.goal,
+      turns: defaults.routing.turns,
+      redact: defaults.redact.piiThreshold,
+      shield: defaults.shield.injectionThreshold,
+      guard: defaults.guard.reviewThreshold,
+      check: defaults.check.unsupportedThreshold,
+      checkWait: defaults.check.deadlineMs,
+      waits: defaults.waits,
+      calibrateEvery: defaults.calibrateEvery,
+    },
+    {
+      easyBelow: 0.5,
+      hardFrom: 1.5,
+      minConfidence: 0.3,
+      downgradeConfidence: 0.6,
+      stepsLow: 0.5,
+      stepsHigh: 1.2,
+      stepsMinConfidence: 0.3,
+      feedbackThreshold: 0.8,
+      repeatThreshold: 0.75,
+      goal: "balanced",
+      turns: false,
+      redact: 0.7,
+      shield: 0.9,
+      guard: 0.9,
+      check: 0.5,
+      checkWait: 3000,
+      waits: { redact: 3000, shield: 2000, guard: 3000 },
+      calibrateEvery: 200,
+    },
+  );
+  assert.throws(
+    () => parseSettings({ routing: { stepsLow: 1.2, stepsHigh: 1.2 } }),
+    /steps boundaries/,
+  );
+});

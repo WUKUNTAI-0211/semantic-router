@@ -62,12 +62,12 @@ test("a hard prompt moves your turns up to the strong tier, an easy one stays of
 
 test("an unsure answer keeps the tier; a smaller one needs more confidence and never comes with the quality goal", () => {
   assert.deepEqual(
-    planTurn(facts({ complexity: { score: 1.8, confidence: 0.3 } }), routing()),
+    planTurn(facts({ complexity: { score: 1.8, confidence: 0.2 } }), routing()),
     {
       kind: "keep",
       reason: "low-confidence",
       would: 2,
-      minConfidence: 0.5,
+      minConfidence: 0.3,
       effort: "medium",
     },
   );
@@ -100,7 +100,7 @@ test("a short reply never moves your turns down, and keeps the last effort", () 
       }),
       routing(),
     ),
-    { kind: "keep", reason: "follow-up", would: 1, minConfidence: 0.5 },
+    { kind: "keep", reason: "follow-up", would: 1, minConfidence: 0.3 },
   );
 });
 

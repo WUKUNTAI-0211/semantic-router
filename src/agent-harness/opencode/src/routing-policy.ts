@@ -119,11 +119,12 @@ export function choose(
   let variant = rank === parentRank ? parentVariant : undefined;
   if (tier.efforts.length) {
     const steps = scores?.steps;
+    // The steps answer on its own lines, as the Claude Code plugin's pickEffort.
     const index =
-      steps && steps.confidence >= settings.minConfidence
-        ? steps.score < settings.easyBelow
+      steps && steps.confidence >= settings.stepsMinConfidence
+        ? steps.score < settings.stepsLow
           ? 0
-          : steps.score < settings.hardFrom
+          : steps.score < settings.stepsHigh
             ? 1
             : 2
         : 1;

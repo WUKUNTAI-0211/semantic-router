@@ -15,13 +15,23 @@ type Saved = Values & {
   pinned?: Field[];
   turns?: boolean;
   calibrateEvery?: number;
-  downgradeConfidence?: number;
-};
-const confidence = (value: unknown) =>
+} & Partial<Record<Tune, number>>;
+// The router's lines that calibration does not fit, set in /vsr-config and kept beside the rest, each with its largest
+// value: the smaller-model line and the steps answer's three.
+export const TUNES = {
+  downgradeConfidence: 1,
+  stepsLow: 2,
+  stepsHigh: 2,
+  stepsMinConfidence: 1,
+} as const;
+export type Tune = keyof typeof TUNES;
+const TUNE_KEYS = Object.keys(TUNES) as Tune[];
+const tuned = (key: Tune, value: unknown) =>
   typeof value === "number" &&
   Number.isFinite(value) &&
   value >= 0 &&
-  value <= 1;
+  value <= TUNES[key];
+type Named = Partial<Record<"turns" | "calibrateEvery" | Tune, boolean>>;
 export type ControlResult =
   | { saved: true; revision: number }
   | { saved: false; reason: "stale" | "invalid" | "storage" };
@@ -38,11 +48,7 @@ export class Controls {
   private pinned: Field[] = [];
   private readonly pin: (values: Partial<Fields>) => void;
   // What the plugin options name of these: then the saved choice does not override them.
-  private readonly named: {
-    turns?: boolean;
-    calibrateEvery?: boolean;
-    downgradeConfidence?: boolean;
-  };
+  private readonly named: Named;
   // Told when the person turns the routing of their turns on or off, a repeat of the same choice included.
   turned: (on: boolean) => void = () => {};
   private readonly unpin: () => Promise<void>;
@@ -53,11 +59,7 @@ export class Controls {
     changed: () => void,
     pin: (values: Partial<Fields>) => void = () => {},
     unpin: () => Promise<void> = async () => {},
-    named: {
-      turns?: boolean;
-      calibrateEvery?: boolean;
-      downgradeConfidence?: boolean;
-    } = {},
+    named: Named = {},
   ) {
     this.named = named;
     this.settings = settings;
@@ -82,8 +84,13 @@ export class Controls {
       goal: this.settings.routing.goal,
       turns: this.settings.routing.turns,
       calibrateEvery: this.settings.calibrateEvery,
-      downgradeConfidence: this.settings.routing.downgradeConfidence,
+      ...this.tunes(),
     };
+  }
+  private tunes(): Record<Tune, number> {
+    return Object.fromEntries(
+      TUNE_KEYS.map((key) => [key, this.settings.routing[key]]),
+    ) as Record<Tune, number>;
   }
   private parse(input: Record<string, unknown>): Values {
     if (
@@ -150,8 +157,9 @@ export class Controls {
           (!Number.isInteger(saved.calibrateEvery) ||
             (saved.calibrateEvery as number) < 0 ||
             (saved.calibrateEvery as number) > 100_000)) ||
-        (saved.downgradeConfidence !== undefined &&
-          !confidence(saved.downgradeConfidence))
+        TUNE_KEYS.some(
+          (key) => saved[key] !== undefined && !tuned(key, saved[key]),
+        )
       )
         throw new Error("Invalid saved controls");
       if (saved.base !== this.base) return; // Explicit changes to configured defaults win.
@@ -168,11 +176,12 @@ export class Controls {
         !this.named.calibrateEvery
       )
         this.settings.calibrateEvery = saved.calibrateEvery;
-      if (
-        typeof saved.downgradeConfidence === "number" &&
-        !this.named.downgradeConfidence
-      )
-        this.settings.routing.downgradeConfidence = saved.downgradeConfidence;
+      const lines = { ...this.tunes() };
+      for (const key of TUNE_KEYS)
+        if (typeof saved[key] === "number" && !this.named[key])
+          lines[key] = saved[key] as number;
+      if (lines.stepsLow < lines.stepsHigh)
+        Object.assign(this.settings.routing, lines);
       this.revision = saved.revision as number;
     } catch {
       this.persistence = "unavailable";
@@ -193,7 +202,7 @@ export class Controls {
               "goal",
               "turns",
               "calibrateEvery",
-              "downgradeConfidence",
+              ...TUNE_KEYS,
               "follow",
             ].includes(key),
         ) ||
@@ -203,11 +212,12 @@ export class Controls {
           "goal",
           "turns",
           "calibrateEvery",
-          "downgradeConfidence",
+          ...TUNE_KEYS,
           "follow",
         ].some((key) => Object.hasOwn(input, key)) ||
-        (input.downgradeConfidence !== undefined &&
-          !confidence(input.downgradeConfidence)) ||
+        TUNE_KEYS.some(
+          (key) => input[key] !== undefined && !tuned(key, input[key]),
+        ) ||
         (input.turns !== undefined && typeof input.turns !== "boolean") ||
         (input.calibrateEvery !== undefined &&
           (!Number.isInteger(input.calibrateEvery) ||
@@ -241,10 +251,17 @@ export class Controls {
         typeof input.calibrateEvery === "number"
           ? input.calibrateEvery
           : this.settings.calibrateEvery;
-      const downgradeConfidence =
-        typeof input.downgradeConfidence === "number"
-          ? input.downgradeConfidence
-          : this.settings.routing.downgradeConfidence;
+      const lines = Object.fromEntries(
+        TUNE_KEYS.map((key) => [
+          key,
+          typeof input[key] === "number"
+            ? (input[key] as number)
+            : this.settings.routing[key],
+        ]),
+      ) as Record<Tune, number>;
+      // The steps answer's lines keep their order, as the options require.
+      if (lines.stepsLow >= lines.stepsHigh)
+        return { saved: false, reason: "invalid" };
       const pinned = input.follow
         ? []
         : FIELDS.filter(
@@ -263,7 +280,7 @@ export class Controls {
           ...(pinned.length ? { pinned } : {}),
           turns,
           calibrateEvery,
-          downgradeConfidence,
+          ...lines,
         });
       } catch {
         this.persistence = "unavailable";
@@ -272,7 +289,7 @@ export class Controls {
       this.pinned = pinned;
       this.assign(next, turns);
       this.settings.calibrateEvery = calibrateEvery;
-      this.settings.routing.downgradeConfidence = downgradeConfidence;
+      Object.assign(this.settings.routing, lines);
       this.revision = revision;
       this.persistence = "durable";
       if (input.follow) await this.unpin().catch(() => {});

@@ -94,8 +94,15 @@ function effortAt(
 ): { effort?: string; sure: boolean } {
   const efforts = routing.tiers[rank]?.efforts ?? [];
   if (!efforts.length) return { sure: false };
-  const sure = steps !== undefined && steps.confidence >= routing.minConfidence;
-  const index = sure ? rankOf(steps.score, routing) : 1;
+  const sure =
+    steps !== undefined && steps.confidence >= routing.stepsMinConfidence;
+  const index = !sure
+    ? 1
+    : steps.score < routing.stepsLow
+      ? 0
+      : steps.score < routing.stepsHigh
+        ? 1
+        : 2;
   return {
     effort: efforts[Math.min(index, efforts.length - 1)],
     sure,

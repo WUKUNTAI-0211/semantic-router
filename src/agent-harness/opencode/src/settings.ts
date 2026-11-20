@@ -174,7 +174,8 @@ export function parseSettings(input: unknown): Settings {
     unsupportedThreshold > 1
   )
     throw new Error("Invalid check unsupportedThreshold");
-  const deadlineMs = check.deadlineMs === undefined ? 1500 : check.deadlineMs;
+  // Three seconds, as the Claude Code plugin's check waits (ANSWER_MS): a long answer needs it.
+  const deadlineMs = check.deadlineMs === undefined ? 3000 : check.deadlineMs;
   if (
     typeof deadlineMs !== "number" ||
     !Number.isInteger(deadlineMs) ||

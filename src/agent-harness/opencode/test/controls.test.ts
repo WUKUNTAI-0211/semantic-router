@@ -255,3 +255,48 @@ test("the router's line for a smaller tier is kept as calibrateEvery is, and an 
   ).load(async () => saved);
   assert.equal(named.routing.downgradeConfidence, 0.65);
 });
+
+test("the steps answer's lines are kept as the smaller-model line is, in their order", async () => {
+  const config = parseSettings({});
+  const controls = new Controls(
+    config,
+    "i",
+    async () => {},
+    () => {},
+  );
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "i",
+      expectedRevision: 0,
+      stepsLow: 0.4,
+      stepsHigh: 1.4,
+      stepsMinConfidence: 0.5,
+    }),
+    { saved: true, revision: 1 },
+  );
+  assert.deepEqual(
+    [
+      config.routing.stepsLow,
+      config.routing.stepsHigh,
+      config.routing.stepsMinConfidence,
+    ],
+    [0.4, 1.4, 0.5],
+  );
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "i",
+      expectedRevision: 1,
+      stepsLow: 1.5,
+    }),
+    { saved: false, reason: "invalid" },
+    "the few-steps line stays under the many-steps line",
+  );
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "i",
+      expectedRevision: 1,
+      stepsHigh: 2.5,
+    }),
+    { saved: false, reason: "invalid" },
+  );
+});

@@ -18,6 +18,9 @@ export interface ViewSnapshot extends Snapshot {
     turns: boolean;
     calibrateEvery: number;
     downgradeConfidence: number;
+    stepsLow: number;
+    stepsHigh: number;
+    stepsMinConfidence: number;
     note: string;
     listener: boolean;
   };
@@ -32,6 +35,9 @@ export type ControlPatch = {
   turns?: boolean;
   calibrateEvery?: number;
   downgradeConfidence?: number;
+  stepsLow?: number;
+  stepsHigh?: number;
+  stepsMinConfidence?: number;
   follow?: true;
 };
 export interface ViewService {

@@ -432,3 +432,31 @@ test("a model without variants routes without one: OpenCode's `default` placehol
     "gateway/middle#low",
   );
 });
+
+test("effort follows the steps answer on its own lines, as the Claude Code plugin's pickEffort", () => {
+  const parent = { providerID: "fixture", id: "middle", variant: "medium" };
+  const effort = (steps: number, confidence = 0.95) =>
+    choose(
+      settings().routing,
+      parent,
+      candidates,
+      {
+        complexity: { score: 0.8, confidence: 0.95 },
+        steps: { score: steps, confidence },
+      },
+      false,
+    ).model;
+  // Below the few-steps line 0.5, the lowest; from the many-steps line 1.2, the highest; the middle between.
+  assert.equal(effort(0.4), "fixture/middle#low");
+  assert.equal(effort(0.8), "fixture/middle#medium");
+  assert.equal(
+    effort(1.3),
+    "fixture/middle#high",
+    "1.3 is many steps on the steps line, though under the strong difficulty line",
+  );
+  assert.equal(
+    effort(1.3, 0.2),
+    "fixture/middle#medium",
+    "under the steps confidence line the answer is not acted on",
+  );
+});

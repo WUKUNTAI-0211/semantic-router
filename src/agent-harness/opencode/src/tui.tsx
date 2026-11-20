@@ -3,6 +3,8 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { RGBA, ScrollBoxRenderable } from "@opentui/core";
 import { MIN_LABELS } from "./calibration.ts";
+import { TUNES } from "./controls.ts";
+import type { Tune } from "./controls.ts";
 import { Vsr } from "./rpc.ts";
 import { APPS } from "./settings.ts";
 import type { App, Wait } from "./settings.ts";
@@ -58,6 +60,13 @@ const WAIT_CHOICES = [1000, 2000, 3000, "done"] as const;
 const waitWords = (wait: Wait) =>
   wait === "done" ? "until done" : `${wait / 1000}s`;
 const GOALS = ["balanced", "quality", "save"] as const;
+// The /vsr-config names of the router's lines calibration does not fit.
+const TUNE_NAMES: Record<Tune, string> = {
+  downgradeConfidence: "smaller-model line",
+  stepsLow: "few-steps line",
+  stepsHigh: "many-steps line",
+  stepsMinConfidence: "steps confidence line",
+};
 // What each /vsr-config row does and what it depends on: the Claude Code plugin's /config descriptions (plugin.json
 // userConfig), with the agent for Claude and your three tiers for Haiku, Sonnet and Opus.
 const CONFIG_TIPS: Record<string, string> = {
@@ -82,8 +91,14 @@ const CONFIG_TIPS: Record<string, string> = {
   goal: "quality: never a smaller tier than yours. balanced: a smaller tier only when the router is sure, at the smaller-model line. save: a smaller tier whenever it answers clearly enough to route, at the confidence line, and the light tier for your turns too.",
   turns:
     "routed: the router also picks the tier and effort of each prompt you send. A turn keeps its model through its tool calls, a short reply keeps the last turn's, and a move to a smaller tier waits while rewriting the prompt cache costs more than it saves. A model you pick yourself pauses it until you pick routed again. yours: your turns run on the model you picked.",
-  downgrade:
+  downgradeConfidence:
     "With the balanced goal, the confidence a move to a smaller tier than yours needs (0 to 1); below it the subagent or your turn keeps its model. save uses the confidence line instead, and quality never goes smaller.",
+  stepsLow:
+    "Expected reasoning steps (0 to 2) below which a subagent or your turn starts at its tier's lowest effort. Never above the many-steps line.",
+  stepsHigh:
+    "Expected reasoning steps (0 to 2) at or above which a subagent or your turn starts at its tier's highest effort; in between, the middle one. Never below the few-steps line.",
+  stepsMinConfidence:
+    "Below this confidence (0 to 1) the steps answer is ignored and a subagent or your turn starts at its tier's middle effort.",
   every:
     "Decisions since the last calibration before the panel suggests /vsr-calibrate. 0 turns it off.",
   follow:
@@ -218,7 +233,7 @@ export default Plugin.define({
       | { kind: "goal" }
       | { kind: "turns" }
       | { kind: "line"; app: App; index: number }
-      | { kind: "downgrade" }
+      | { kind: "tune"; key: Tune }
       | { kind: "every" }
       | { kind: "follow" }
       | { kind: "check" };
@@ -236,9 +251,14 @@ export default Plugin.define({
           app,
           index,
         })),
-        // The balanced goal's line for a smaller tier, after the router's own (the Claude Code plugin's
-        // routerDowngradeConfidence).
-        ...(app === "router" ? [{ kind: "downgrade" as const }] : []),
+        // After the router's own lines, the ones calibration does not fit: the balanced goal's line for a smaller tier
+        // and the steps answer's three (the Claude Code plugin's routerDowngradeConfidence and routerSteps*).
+        ...(app === "router"
+          ? (Object.keys(TUNES) as Tune[]).map((key) => ({
+              kind: "tune" as const,
+              key,
+            }))
+          : []),
       ]),
       { kind: "every" },
       // Two actions, as the Claude Code plugin's `/vsr follow` and its setup's check.
@@ -272,43 +292,51 @@ export default Plugin.define({
       // A threshold is asked for in OpenCode's own prompt, after which the list opens again where it was.
       const ask = async (index: number) => {
         const row = CONFIG_ROWS[index]!;
-        if (
-          row.kind !== "line" &&
-          row.kind !== "every" &&
-          row.kind !== "downgrade"
-        )
+        if (row.kind !== "line" && row.kind !== "every" && row.kind !== "tune")
           return;
         ctx.ui.dialog.clear();
         const now =
           row.kind === "every"
             ? String(current()?.controls.calibrateEvery ?? 0)
-            : row.kind === "downgrade"
-              ? (current()?.controls.downgradeConfidence ?? 0).toFixed(2)
+            : row.kind === "tune"
+              ? (current()?.controls[row.key] ?? 0).toFixed(2)
               : lineOf(row.app).values[row.index]!.toFixed(2);
         const typed = await ctx.ui.dialog.prompt({
           title:
             row.kind === "every"
               ? "vSR: calibrate every how many decisions? (0 is off)"
-              : row.kind === "downgrade"
-                ? "vSR smaller-model line (router)"
+              : row.kind === "tune"
+                ? `vSR ${TUNE_NAMES[row.key]} (router)`
                 : `vSR ${LINES[row.app][row.index]![0]} (${row.app})`,
           description:
             row.kind === "every"
               ? "The panel suggests /vsr-calibrate after this many decisions."
-              : row.kind === "downgrade"
-                ? CONFIG_TIPS.downgrade!
+              : row.kind === "tune"
+                ? CONFIG_TIPS[row.key]!
                 : `${LINES[row.app][row.index]![1]} From 0 to ${ceilingOf(row.app, row.index)}.`,
           value: now,
         });
         const value = typed === undefined ? NaN : Number(typed.trim());
         if (typed !== undefined && typed.trim() !== now) {
-          if (row.kind === "downgrade") {
-            if (!Number.isFinite(value) || value < 0 || value > 1)
+          if (row.kind === "tune") {
+            const ceiling = TUNES[row.key];
+            const steps = {
+              stepsLow: current()?.controls.stepsLow ?? 0,
+              stepsHigh: current()?.controls.stepsHigh ?? 0,
+              [row.key]: value,
+            };
+            if (!Number.isFinite(value) || value < 0 || value > ceiling)
               ctx.ui.toast.show({
-                message: "vSR: a number from 0 to 1.",
+                message: `vSR: a number from 0 to ${ceiling}.`,
                 variant: "warning",
               });
-            else await controller.change({ downgradeConfidence: value });
+            else if (steps.stepsLow >= steps.stepsHigh)
+              ctx.ui.toast.show({
+                message:
+                  "vSR: the few-steps line must stay under the many-steps line.",
+                variant: "warning",
+              });
+            else await controller.change({ [row.key]: value });
           } else if (row.kind === "every") {
             if (!Number.isInteger(value) || value < 0 || value > 100_000)
               ctx.ui.toast.show({
@@ -390,8 +418,7 @@ export default Plugin.define({
         if (row.kind === "turns")
           return snapshot.controls.turns ? "routed" : "yours";
         if (row.kind === "follow" || row.kind === "check") return "";
-        if (row.kind === "downgrade")
-          return snapshot.controls.downgradeConfidence.toFixed(2);
+        if (row.kind === "tune") return snapshot.controls[row.key].toFixed(2);
         if (row.kind === "every")
           return snapshot.controls.calibrateEvery
             ? `${snapshot.controls.calibrateEvery} decisions`
@@ -413,8 +440,8 @@ export default Plugin.define({
                     ? "follow the Router listener"
                     : row.kind === "check"
                       ? "check the runtime"
-                      : row.kind === "downgrade"
-                        ? "router · smaller-model line"
+                      : row.kind === "tune"
+                        ? `router · ${TUNE_NAMES[row.key]}`
                         : `${row.app} · ${LINES[row.app][row.index]![0].toLowerCase()}`;
       // Whose a threshold is: the options', a calibration's, or yours from here.
       // Why a setting does nothing now, from what reads it: an app's lines and wait need the app on, the router's goal
@@ -426,15 +453,17 @@ export default Plugin.define({
         const app =
           row.kind === "line" || row.kind === "wait"
             ? row.app
-            : row.kind === "goal" ||
-                row.kind === "turns" ||
-                row.kind === "downgrade"
+            : row.kind === "goal" || row.kind === "turns" || row.kind === "tune"
               ? "router"
               : undefined;
         if (app && !snapshot.apps[app]) return `not used: ${app} off`;
         if (row.kind === "follow" && !snapshot.controls.listener)
           return "not used: no Router listener";
-        if (row.kind === "downgrade" && snapshot.controls.goal !== "balanced")
+        if (
+          row.kind === "tune" &&
+          row.key === "downgradeConfidence" &&
+          snapshot.controls.goal !== "balanced"
+        )
           return snapshot.controls.goal === "quality"
             ? "not used: quality never goes smaller"
             : "not used: save needs only the confidence line";
