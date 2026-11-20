@@ -386,6 +386,9 @@ test(
     ];
     const shown = await native.terminal(run.sessionID, open, 5);
     const lines = shown.last.split("\n");
+    // The panel fills the column OpenCode gives it, down beside the prompt and status, leaving no gap under it.
+    const bottom = lines.findLastIndex((line) => line.trim() !== "");
+    assert.match(lines[bottom]!, /╰─+/, shown.last);
     // An SGR mouse press and release on a control's text.
     const click = (
       text: string,

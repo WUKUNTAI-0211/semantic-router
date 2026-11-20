@@ -107,9 +107,6 @@ const names: Record<App, string> = APP_NAMES;
 export default Plugin.define({
   id: "vsr.opencode.tui",
   setup(ctx) {
-    const [height, setHeight] = createSignal(ctx.renderer.height);
-    const resize = () => setHeight(ctx.renderer.height);
-    ctx.renderer.on("resize", resize);
     const [view, update] = ctx.storage.memory<ViewState>("view.v1", {
       initial: emptyView(),
     });
@@ -1491,7 +1488,8 @@ export default Plugin.define({
             <box
               flexDirection="column"
               width={panel.width}
-              height={Math.max(1, height() - 3)}
+              // The host lays the panel out: it fills the column OpenCode gives it, down beside the prompt and status.
+              height="100%"
               border
               borderStyle="rounded"
               borderColor={panel.focused ? tone("focus") : tone("border")}
@@ -1857,7 +1855,6 @@ export default Plugin.define({
     });
     return () => {
       clearInterval(poll);
-      ctx.renderer.off("resize", resize);
       offUpdated();
       offState();
       offComposer();
