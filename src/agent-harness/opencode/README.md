@@ -461,10 +461,14 @@ token cannot be sent to another host.
    it, stop it and delete `~/.local/share/vsr`:
 
    ```bash
-   # Started for one login:
-   kill "$(lsof -ti tcp:8790)"
+   # Started for one login (the pid setup kept; `lsof -ti tcp:8790` finds it otherwise):
+   kill "$(cat ~/.local/share/vsr/runtime.pid)"
    # Started as a Linux user service:
    systemctl --user disable --now vsr-runtime
+   rm ~/.config/systemd/user/vsr-runtime.service && systemctl --user daemon-reload
+   # Started at login on macOS:
+   launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/local.vsr-runtime.plist
+   rm ~/Library/LaunchAgents/local.vsr-runtime.plist
    rm -rf ~/.local/share/vsr
    ```
 

@@ -33,7 +33,9 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
 
    Done when the user picked one. An Apple GPU cannot run vela3 yet, so a Mac runs it on the CPU.
 
-4. **Install**, only when the user agrees to the download: about 200 MB of CPU torch, or 3 to 4 GB of CUDA or ROCm torch (5 to 6 GB on disk; a few minutes on a fast connection), plus about 1.8 GB of model weights on first start. Use a Python 3.10 or later; skip any command whose result already exists (`~/.local/share/vsr/venv/bin/vllm-srun` means it is installed). Each takes minutes, so run the pip commands in the background and wait for them.
+4. **Install**, only when the user agrees to the download: about 200 MB of CPU torch, or 2 to 3 GB of CUDA or ROCm torch, plus about 1.8 GB of model weights on first start. Use a Python 3.10 or later; skip any command whose result already exists (`~/.local/share/vsr/venv/bin/vllm-srun` means it is installed). Each takes minutes, so run the pip commands in the background and wait for them.
+
+   First check the disk, as the Claude Code plugin's setup does: the install needs the venv (1.1 GiB for a CPU torch, 6 GiB for a GPU one; none when `vllm-srun` is installed), the model (1.8 GiB; none when `~/.cache/huggingface/hub/models--vllm-sr--vela3-lite` exists, or under `$HF_HOME/hub` when that is set), and 1 GiB to spare. Compare that with the smaller free space of `df -BG ~/.local/share` and of the Hugging Face cache's disk. When it is short, say `not installing: only N GiB disk free, M needed` and stop; go on only when the user says the space is there (the model on another disk, say).
 
    ```bash
    python3 -m venv ~/.local/share/vsr/venv
@@ -48,13 +50,39 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
 
    On failure, show the last pip lines and stop. For ROCm, torch from PyPI is a CUDA build: point the user to pytorch.org for the ROCm wheel index. Done when `~/.local/share/vsr/venv/bin/vllm-srun --help` prints its usage.
 
-5. **Start it.** Ask whether it should run for this login only (it stops at logout or reboot) or keep running across reboots. For this login, with `cpu`, `cuda` or `rocm` as the device:
+5. **Start it.** First the port: when `curl -s --max-time 3 http://127.0.0.1:8790/health` prints `"status":"ready"`, a runtime already runs there, so keep it and skip to step 6; when something else holds port 8790 (`curl` connects but gets no vSR health, or `ss -ltn 'sport = :8790'` lists it), it may be a runtime still loading: say so and wait (step 6) rather than start a second one.
+
+   On a CPU, time bf16 against float32 with the venv's own torch, as the Claude Code plugin's setup does, and show the `dtype` it picks:
 
    ```bash
-   nohup ~/.local/share/vsr/venv/bin/vllm-srun serve vllm-sr/vela3-lite --device <device> --host 127.0.0.1 --port 8790 >> ~/.local/share/vsr/runtime.log 2>&1 &
+   ~/.local/share/vsr/venv/bin/python - <<'PY'
+   import json, time, torch
+   def ms(dtype, n=1024, tokens=256, reps=20):
+       w = torch.randn(n * 4, n, dtype=dtype)
+       x = torch.randn(tokens, n, dtype=dtype)
+       with torch.inference_mode():
+           for _ in range(3):
+               x @ w.T
+           start = time.perf_counter()
+           for _ in range(reps):
+               x @ w.T
+           return (time.perf_counter() - start) / reps * 1000
+   f32, bf16 = ms(torch.float32), ms(torch.bfloat16)
+   print(json.dumps({"float32": f32, "bfloat16": bf16, "dtype": "float32" if bf16 > 1.5 * f32 else "auto"}))
+   PY
    ```
 
-   Across reboots on Linux, write that command as the `ExecStart` of a systemd user unit at `~/.config/systemd/user/vsr-runtime.service` (with `Restart=on-failure` and the log appended to `~/.local/share/vsr/runtime.log`), show it to the user, and only on their yes run `systemctl --user daemon-reload && systemctl --user enable --now vsr-runtime`. On macOS, the same as a launchd agent in `~/Library/LaunchAgents`. Done when the process runs.
+   When it says `float32` (a CPU without native bf16, where bf16 is several times slower), add `--dtype float32` to the command below; otherwise leave the runtime's own `auto`. On a GPU, skip this.
+
+   Ask whether it should run for this login only (it stops at logout or reboot) or keep running across reboots. For this login, with `cpu`, `cuda` or `rocm` as the device, and its pid kept where the README's uninstall steps stop it:
+
+   ```bash
+   mkdir -p ~/.local/share/vsr
+   nohup ~/.local/share/vsr/venv/bin/vllm-srun serve vllm-sr/vela3-lite --device <device> --host 127.0.0.1 --port 8790 [--dtype float32] >> ~/.local/share/vsr/runtime.log 2>&1 &
+   echo $! > ~/.local/share/vsr/runtime.pid
+   ```
+
+   Across reboots on Linux, write that command as the `ExecStart` of a systemd user unit at `~/.config/systemd/user/vsr-runtime.service` (with `Restart=on-failure` and the log appended to `~/.local/share/vsr/runtime.log`), show it to the user, and only on their yes run `systemctl --user daemon-reload && systemctl --user enable --now vsr-runtime`. On macOS, the same as a launchd agent at `~/Library/LaunchAgents/local.vsr-runtime.plist` (label `local.vsr-runtime`, `RunAtLoad` and `KeepAlive`), loaded with `launchctl bootstrap "gui/$(id -u)"` on the user's yes. These are the names the Claude Code plugin's setup uses, so either plugin finds the service the other wrote. Done when the process runs.
 
 6. **Wait until it answers.** The first start downloads the model, which can take several minutes. Poll `curl -s --max-time 3 http://127.0.0.1:8790/health` every 10 seconds, up to 15 minutes, until it prints `"status":"ready"`. For a remote runtime, use the user's URL with `/v1/decisions` replaced by `/health`; a Router listener answers `"status":"ok"` there and a hosted API has no `/health`, so for those `/v1/models` listing a model means it answers. If it never answers, show the last lines of `~/.local/share/vsr/runtime.log`. Done when it is ready.
 
