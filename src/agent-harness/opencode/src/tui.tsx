@@ -60,6 +60,9 @@ const WAIT_CHOICES = [1000, 2000, 3000, "done"] as const;
 const waitWords = (wait: Wait) =>
   wait === "done" ? "until done" : `${wait / 1000}s`;
 const GOALS = ["balanced", "quality", "save"] as const;
+// A model picked by the person hands this session's turns back to them until they pick routed again.
+const turnsRouted = (snapshot: ViewSnapshot): boolean =>
+  snapshot.controls.turns && !snapshot.turns.paused;
 // The /vsr-config names of the router's lines calibration does not fit.
 const TUNE_NAMES: Record<Tune, string> = {
   downgradeConfidence: "smaller-model line",
@@ -388,7 +391,7 @@ export default Plugin.define({
             ]!,
           });
         else if (row.kind === "turns")
-          await controller.change({ turns: !snapshot.controls.turns });
+          await controller.change({ turns: !turnsRouted(snapshot) });
         else if (row.kind === "follow") {
           if (await controller.change({ follow: true }))
             ctx.ui.toast.show({
@@ -416,7 +419,7 @@ export default Plugin.define({
         if (row.kind === "wait") return waitWords(snapshot.waits[row.app]);
         if (row.kind === "goal") return snapshot.controls.goal;
         if (row.kind === "turns")
-          return snapshot.controls.turns ? "routed" : "yours";
+          return turnsRouted(snapshot) ? "routed" : "yours";
         if (row.kind === "follow" || row.kind === "check") return "";
         if (row.kind === "tune") return snapshot.controls[row.key].toFixed(2);
         if (row.kind === "every")
@@ -1525,7 +1528,7 @@ export default Plugin.define({
               paddingLeft={1}
               paddingRight={1}
             >
-              <text flexShrink={0}>
+              <text flexShrink={0} wrapMode="none" truncate>
                 <Brand />
                 {" decisions"}
                 <Span fg={tone("muted")}>{` · ${panel.sessionID}`}</Span>
@@ -1547,7 +1550,12 @@ export default Plugin.define({
                   <>
                     {/* The list scrolls; the summary lines keep their height instead of drawing over each other. */}
                     {/* A click checks the runtime, as the Claude Code plugin's setup does. */}
-                    <text flexShrink={0} onMouseUp={() => void runCheck()}>
+                    <text
+                      flexShrink={0}
+                      wrapMode="none"
+                      truncate
+                      onMouseUp={() => void runCheck()}
+                    >
                       <Span fg={tone(runtimeLook(snapshot()).tone)}>● </Span>
                       runtime {runtimeLook(snapshot()).words}
                       <Span fg={tone("muted")}>
@@ -1565,12 +1573,19 @@ export default Plugin.define({
                     <box flexDirection="column" flexShrink={0}>
                       {CONTROL_ROWS.map((row, index) => (
                         <box flexDirection="row">
-                          <text fg={tone("muted")}>
+                          <text
+                            width={CONTROL_LABEL}
+                            flexShrink={0}
+                            wrapMode="none"
+                            fg={tone("muted")}
+                          >
                             {(index === 0 ? "apps" : "").padEnd(CONTROL_LABEL)}
                           </text>
-                          {row.map((app) => (
+                          {row.map((app, column) => (
                             <text
-                              marginRight={2}
+                              marginRight={column === row.length - 1 ? 0 : 1}
+                              flexShrink={0}
+                              wrapMode="none"
                               onMouseUp={() =>
                                 void controller.change({
                                   apps: { [app]: !snapshot().apps[app] },
@@ -1585,7 +1600,7 @@ export default Plugin.define({
                                 )}
                               >
                                 {`${snapshot().apps[app] ? "●" : "○"} ${app}`.padEnd(
-                                  10,
+                                  8,
                                 )}
                               </Span>
                             </text>
@@ -1595,6 +1610,9 @@ export default Plugin.define({
                       {(["redact", "shield", "guard"] as const).map((app) => (
                         <box flexDirection="row">
                           <text
+                            width={CONTROL_LABEL}
+                            flexShrink={0}
+                            wrapMode="none"
                             fg={tone(snapshot().apps[app] ? "text" : "muted")}
                           >
                             {`${app} waits`.padEnd(CONTROL_LABEL)}
@@ -1602,6 +1620,8 @@ export default Plugin.define({
                           {WAIT_CHOICES.map((choice) => (
                             <text
                               marginRight={1}
+                              flexShrink={0}
+                              wrapMode="none"
                               onMouseUp={() =>
                                 void controller.change({
                                   waits: { [app]: choice },
@@ -1630,6 +1650,9 @@ export default Plugin.define({
                       ))}
                       <box flexDirection="row">
                         <text
+                          width={CONTROL_LABEL}
+                          flexShrink={0}
+                          wrapMode="none"
                           fg={tone(snapshot().apps.router ? "text" : "muted")}
                         >
                           {"router goal".padEnd(CONTROL_LABEL)}
@@ -1637,6 +1660,8 @@ export default Plugin.define({
                         {GOALS.map((goal) => (
                           <text
                             marginRight={1}
+                            flexShrink={0}
+                            wrapMode="none"
                             onMouseUp={() => void controller.change({ goal })}
                           >
                             {snapshot().controls.goal === goal ? (
@@ -1659,6 +1684,9 @@ export default Plugin.define({
                       {/* Your own turns, as the Claude Code plugin's pane row: off leaves them on the model you picked. */}
                       <box flexDirection="row">
                         <text
+                          width={CONTROL_LABEL}
+                          flexShrink={0}
+                          wrapMode="none"
                           fg={tone(snapshot().apps.router ? "text" : "muted")}
                         >
                           {"your turns".padEnd(CONTROL_LABEL)}
@@ -1666,9 +1694,11 @@ export default Plugin.define({
                         {([false, true] as const).map((turns) => (
                           <text
                             marginRight={1}
+                            flexShrink={0}
+                            wrapMode="none"
                             onMouseUp={() => void controller.change({ turns })}
                           >
-                            {snapshot().controls.turns === turns ? (
+                            {turnsRouted(snapshot()) === turns ? (
                               <Span
                                 bg={tone(
                                   snapshot().apps.router
@@ -1686,16 +1716,9 @@ export default Plugin.define({
                             )}
                           </text>
                         ))}
-                        <text fg={tone("muted")}>
-                          {snapshot().turns.paused
-                            ? ` paused · you picked ${snapshot().turns.paused}`
-                            : snapshot().turns.on
-                              ? ` on ${snapshot().turns.model ?? "your model"}`
-                              : ""}
-                        </text>
                       </box>
                     </box>
-                    <text flexShrink={0} marginTop={1}>
+                    <text flexShrink={0} marginTop={1} wrapMode="none" truncate>
                       <strong>{total().total}</strong> decisions
                       <Span fg={tone("muted")}> · </Span>
                       <Span fg={tone(total().masked ? "purple" : "muted")}>

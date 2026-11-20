@@ -570,5 +570,42 @@ test(
         .at(-1)?.reason,
       "pushback",
     );
+    // --model selects a model through the same native event as /model.
+    await native.run("Keep using the model I picked for this turn", id);
+    assert.equal((await snapshot()).turns.paused, "fixture/middle#medium");
+    const screen = await native.terminal(
+      id,
+      [
+        { at: 2000, keys: "/vsr" },
+        { at: 2500, keys: "\r" },
+        { at: 3500, resize: [45, 90] },
+      ],
+      5,
+    );
+    // The PTY replay retains cells outside the resized viewport.
+    const visible = screen.last
+      .split("\n")
+      .map((line) => line.slice(0, 90))
+      .join("\n");
+    assert.match(visible, /apps +[●○] guard +[●○] check +[●○] shield/, visible);
+    assert.match(visible, /[●○] redact +[●○] router +[●○] escalate/, visible);
+    assert.doesNotMatch(screen.last, /paused ·|on your model/, screen.last);
+    const background = (label: string) =>
+      [
+        ...screen.ansi.matchAll(
+          /\x1b\[0;38;2;[\d;]+;48;2;([\d;]+)m ([^ \x1b]+) /g,
+        ),
+      ].find((match) => match[2] === label)?.[1];
+    assert.ok(background("balanced"), screen.ansi);
+    assert.equal(
+      background("yours"),
+      background("balanced"),
+      "manual selection highlights yours",
+    );
+    assert.notEqual(
+      background("routed"),
+      background("yours"),
+      "routed is no longer selected",
+    );
   },
 );
