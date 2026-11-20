@@ -125,15 +125,53 @@ test(
     );
     const after = await snapshot();
     assert.equal(after.controls.turns, false, "the person's change wins");
-    // Following the listener again hands the turns back.
-    assert.deepEqual(
-      await native.rpc("controls", {
-        instanceID: after.instanceID,
-        expectedRevision: after.controls.revision,
-        follow: true,
-      }),
-      { saved: true, revision: after.controls.revision + 1 },
+    // /vsr-follow, as the Claude Code plugin's `/vsr follow`, hands the turns back to the listener.
+    const followed = await native.terminal(
+      run.sessionID,
+      [
+        { at: 2500, keys: "/vsr-follow" },
+        { at: 3000, keys: "\r" },
+      ],
+      5,
+    );
+    assert.ok(
+      followed.text.includes("vSR: follows the listener's profile."),
+      followed.text.slice(-4000),
     );
     assert.equal((await snapshot()).controls.turns, true);
+  },
+);
+
+test(
+  "the setup skill's tools write the settings the user chose and check each app, as the Claude Code plugin's setup scripts",
+  { timeout: 120000 },
+  async (t) => {
+    const native = await fixture(t);
+    const run = await native.run("OUTPUT_CASE SETTINGS");
+    const snapshot = (await native.rpc("snapshot", {
+      sessionID: run.sessionID,
+    })) as ViewSnapshot;
+    assert.equal(snapshot.apps.check, true);
+    const guard = (
+      (await native.rpc("thresholds", {})) as {
+        app: string;
+        values: number[];
+        source: string;
+      }[]
+    ).find((line) => line.app === "guard");
+    assert.deepEqual(guard?.values, [0.8]);
+    assert.equal(guard?.source, "you");
+    const said = (index: number) =>
+      JSON.stringify(
+        native.requests
+          .slice(index)
+          .flatMap((request) => request.messages)
+          .filter((message) => message.role === "tool"),
+      );
+    assert.match(said(0), /check on/);
+    assert.match(said(0), /guard review line 0\.80 \(set by the user\)/);
+    const from = native.requests.length;
+    await native.run("OUTPUT_CASE CHECK", run.sessionID);
+    assert.match(said(from), /Runtime: from the plugin options/);
   },
 );

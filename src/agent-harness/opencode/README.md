@@ -61,11 +61,14 @@ not show a plugin loaded from a folder.
 vSR needs a decision runtime: `vllm-srun serve` on this machine, or a Router
 listener that publishes a System One model.
 
-1. **No runtime yet?** Ask the agent to use the `vsr-setup` skill. It looks at
-   the machine, installs `vllm-srun` pinned to the commit vSR was tested against
-   in `~/.local/share/vsr/venv`, and starts vela3-lite on port 8790 on the GPU
-   or CPU, for this login or as a user service. OpenCode asks before each
-   command it runs. It is the same runtime the Claude Code plugin installs, so
+1. **No runtime yet?** Ask the agent to use the `vsr-setup` skill, the Claude
+   Code plugin's `/vsr:setup`. It looks at the machine and asks for a
+   recommended or a custom setup. It installs `vllm-srun` pinned to the commit
+   vSR was tested against in `~/.local/share/vsr/venv`, and starts vela3-lite
+   on port 8790 on the GPU or CPU, for this login or as a user service; on
+   custom, it also asks which apps run and their thresholds, writes them with
+   its `vsr_settings` tool, and checks each app with `vsr_check`. OpenCode asks
+   before each command it runs. It is the same runtime the Claude Code plugin installs, so
    one runtime serves every agent on the machine. It runs on Linux and macOS;
    a Mac runs it on the CPU, since an Apple GPU cannot run vela3 yet. On Windows,
    connect to a runtime on another machine instead.
@@ -157,16 +160,18 @@ model as usual, and `/vsr` closes the panel.
 | `/vsr`           | Open the decisions panel, or close it                                   |
 | `/vsr-apps`      | Turn apps on or off as switches, or hand them back to a Router listener |
 | `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done  |
+| `/vsr-config`    | Every setting in one list, thresholds included, changed in place        |
 | `/vsr-check`     | Check the decision runtime: one case per enabled app                    |
-| `/vsr-goal`      | Choose the router's goal: balanced, quality or save                     |
 | `/vsr-turns`     | Route your own turns: `on` or `off`; alone, say where they run          |
-| `/vsr-refresh`   | Refresh the panel                                                       |
+| `/vsr-follow`    | Hand what you changed back to a Router listener's profile               |
 | `/vsr-calibrate` | Fit an app's thresholds to your answers                                 |
 | `/vsr-probe`     | Ask the decision model the 30 known cases; say which flipped or drifted |
 
-What you change in `/vsr-apps`, `/vsr-waits` and `/vsr-goal` is saved and applies to every session,
-also after a restart. Changing the same setting in the options later wins over
-it.
+What you change in the panel, `/vsr-apps`, `/vsr-waits`, `/vsr-turns` and
+`/vsr-config` is saved and applies to every session, also after a restart, as
+the Claude Code plugin's `/config` does. Changing the same setting in the
+options later wins over it. In `/vsr-config`, `r` on a threshold brings the
+options' back.
 
 When the runtime cannot be reached, the panel says `offline`, and vSR steps
 aside: OpenCode works as it would without vSR, except that guard's fixed rules
@@ -362,10 +367,11 @@ Global Config › vSR agent plugins) turns each app on or off for every plugin
 pointed at it, and its `router_goal` and `router_turns` set the router's goal
 and [your turns](#your-turns), the same eight fields the Claude Code plugin
 reads. What you name in the options (an app under `apps`, `routing.goal`,
-`routing.turns`) or change in vSR (`/vsr-apps`, `/vsr-goal`, `/vsr-turns`, the
+`routing.turns`) or change in vSR (`/vsr-apps`, `/vsr-config`, `/vsr-turns`, the
 panel) stays yours; the listener sets the rest, and a toast says what it changed
-(`vSR follows the listener: redact off, goal save, turns on`). "Follow the
-Router listener" in `/vsr-apps` hands what you changed back to the listener. A
+(`vSR follows the listener: redact off, goal save, turns on`). `/vsr-follow`,
+as the Claude Code plugin's `/vsr follow`, or "Follow the Router listener" in
+`/vsr-apps`, hands what you changed back to the listener. A
 plain decision runtime sets nothing.
 
 Rules the listener binds to guard and redact (`vsr.rules`) come with the same

@@ -38,6 +38,7 @@ const snapshot = (
     persistence: "durable",
     goal: "balanced",
     turns: false,
+    calibrateEvery: 200,
     note: "",
   },
   calibration: { since: 0, remind: false },

@@ -405,8 +405,31 @@ test("calibrated thresholds apply over the options, outlive a restart and give w
   assert.equal(restarted.guard.reviewThreshold, 0.8);
   assert.deepEqual(
     again.state(),
-    { at: 6, model: "vela3-fast", apps: ["router", "guard"] },
+    { at: 6, model: "vela3-fast", apps: ["router", "guard"], manual: [] },
     "the decision model of the last calibration is kept, for the probe",
+  );
+
+  // A threshold set in /vsr-config is kept the same way, named as the person's, and a reset brings the option back.
+  await again.set("shield", [0.8]);
+  assert.equal(restarted.shield.injectionThreshold, 0.8);
+  assert.deepEqual(again.state().manual, ["shield"]);
+  assert.deepEqual(
+    again.state().apps,
+    ["router", "guard"],
+    "not a calibration",
+  );
+  const third = parseSettings({});
+  await new Calibrated(third, store).load();
+  assert.equal(third.shield.injectionThreshold, 0.8);
+  await again.reset("shield");
+  assert.equal(restarted.shield.injectionThreshold, 0.9);
+  assert.deepEqual(again.state().manual, []);
+  await again.set("guard", [0.85]);
+  await again.apply("guard", [0.82], "vela3-fast", 7);
+  assert.deepEqual(
+    again.state().manual,
+    [],
+    "a calibration after it fits that app again",
   );
 
   const edited = parseSettings({ guard: { reviewThreshold: 0.95 } });

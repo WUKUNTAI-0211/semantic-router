@@ -424,3 +424,61 @@ test(
     );
   },
 );
+
+test(
+  "/vsr-config changes every setting in place, as the Claude Code plugin's /config, and r brings the options' thresholds back",
+  { timeout: 120000 },
+  async (t) => {
+    const native = await fixture(t);
+    const run = await native.run("OUTPUT_CASE READ");
+    const down = (n: number) => "\u001b[B".repeat(n);
+    const screen = await native.terminal(
+      run.sessionID,
+      [
+        { at: 2500, keys: "/vsr-config" },
+        { at: 3000, keys: "\r" },
+        { at: 4000, keys: down(1) + "\r" }, // check: on
+        { at: 5000, keys: down(6) + "\r" }, // shield waits: 2s → 3s
+        { at: 6000, keys: down(4) + "\r" }, // guard · review line: asked for
+        { at: 7000, keys: "\u007f".repeat(6) + "0.8" },
+        { at: 7600, keys: "\r" },
+      ],
+      10,
+    );
+    assert.ok(
+      screen.text.includes("vSR settings") &&
+        /check +on/.test(screen.text) &&
+        /guard · review line +0\.80 +yours · options 0\.90/.test(screen.text),
+      screen.text.slice(-6000),
+    );
+    const snapshot = (await native.rpc("snapshot", {
+      sessionID: run.sessionID,
+    })) as ViewSnapshot;
+    assert.equal(snapshot.apps.check, true);
+    assert.equal(snapshot.waits.shield, 3000);
+    type Lines = { app: string; values: number[]; source: string }[];
+    const guard = async () =>
+      ((await native.rpc("thresholds", {})) as Lines).find(
+        (line) => line.app === "guard",
+      )!;
+    assert.deepEqual(await guard(), {
+      app: "guard",
+      values: [0.8],
+      options: [0.9],
+      source: "you",
+    });
+    // r on the line brings the options' threshold back, and it stays after a restart.
+    await native.terminal(
+      run.sessionID,
+      [
+        { at: 2500, keys: "/vsr-config" },
+        { at: 3000, keys: "\r" },
+        { at: 4000, keys: down(11) + "r" },
+      ],
+      6,
+    );
+    await native.restart();
+    assert.equal((await guard()).source, "options");
+    assert.deepEqual((await guard()).values, [0.9]);
+  },
+);

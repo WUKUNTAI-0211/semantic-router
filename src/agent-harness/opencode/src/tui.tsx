@@ -26,6 +26,7 @@ import {
   suggestionsText,
   listed,
   APP_WORDS,
+  LINES,
   calibrationReportText,
   summary,
   THEME_TOKENS,
@@ -230,6 +231,245 @@ export default Plugin.define({
       };
       ctx.renderer.clearSelection();
       ctx.ui.dialog.show(() => <Switches />);
+      ctx.ui.dialog.set({ size: "large" });
+    }
+    // `/vsr-config`, as the Claude Code plugin's /config rows: every setting with its value, changed in place. What it
+    // sets is kept in plugin storage over the options, and an option you edit in opencode.jsonc later wins again.
+    type ConfigRow =
+      | { kind: "app"; app: App }
+      | { kind: "wait"; app: "redact" | "shield" | "guard" }
+      | { kind: "goal" }
+      | { kind: "turns" }
+      | { kind: "line"; app: App; index: number }
+      | { kind: "every" };
+    const CONFIG_ROWS: ConfigRow[] = [
+      ...CONTROL_ROWS.flat().map((app) => ({ kind: "app" as const, app })),
+      ...(["redact", "shield", "guard"] as const).map((app) => ({
+        kind: "wait" as const,
+        app,
+      })),
+      { kind: "goal" },
+      { kind: "turns" },
+      ...CONTROL_ROWS.flat().flatMap((app) =>
+        LINES[app].map((_, index) => ({ kind: "line" as const, app, index })),
+      ),
+      { kind: "every" },
+    ];
+    type Lines = {
+      app: App;
+      values: number[];
+      options: number[];
+      source: "options" | "calibration" | "you";
+    }[];
+    // The largest a threshold may be: the router's two difficulty lines run to 2, every other line to 1.
+    const ceilingOf = (app: App, index: number) =>
+      app === "router" && index < 2 ? 2 : 1;
+    async function config(at = 0): Promise<void> {
+      if (!current()) return;
+      let lines: Lines;
+      try {
+        lines = (await remote.thresholds({}, call())) as Lines;
+      } catch {
+        ctx.ui.toast.show({
+          message: "vSR settings unavailable; retry when connected.",
+          variant: "warning",
+        });
+        return;
+      }
+      const [found, setFound] = createSignal(lines);
+      const [cursor, setCursor] = createSignal(at);
+      const lineOf = (app: App) => found().find((item) => item.app === app)!;
+      // A threshold is asked for in OpenCode's own prompt, after which the list opens again where it was.
+      const ask = async (index: number) => {
+        const row = CONFIG_ROWS[index]!;
+        if (row.kind !== "line" && row.kind !== "every") return;
+        ctx.ui.dialog.clear();
+        const now =
+          row.kind === "every"
+            ? String(current()?.controls.calibrateEvery ?? 0)
+            : lineOf(row.app).values[row.index]!.toFixed(2);
+        const typed = await ctx.ui.dialog.prompt({
+          title:
+            row.kind === "every"
+              ? "vSR: calibrate every how many decisions? (0 is off)"
+              : `vSR ${LINES[row.app][row.index]![0]} (${row.app})`,
+          description:
+            row.kind === "every"
+              ? "The panel suggests /vsr-calibrate after this many decisions."
+              : `${LINES[row.app][row.index]![1]} From 0 to ${ceilingOf(row.app, row.index)}.`,
+          value: now,
+        });
+        const value = typed === undefined ? NaN : Number(typed.trim());
+        if (typed !== undefined && typed.trim() !== now) {
+          if (row.kind === "every") {
+            if (!Number.isInteger(value) || value < 0 || value > 100_000)
+              ctx.ui.toast.show({
+                message: "vSR: a whole number from 0 to 100000.",
+                variant: "warning",
+              });
+            else await controller.change({ calibrateEvery: value });
+          } else {
+            const values = [...lineOf(row.app).values];
+            values[row.index] = value;
+            const ceiling = ceilingOf(row.app, row.index);
+            if (
+              !Number.isFinite(value) ||
+              value < 0 ||
+              value > ceiling ||
+              (row.app === "router" && values[0]! >= values[1]!)
+            )
+              ctx.ui.toast.show({
+                message:
+                  row.app === "router" && values[0]! >= values[1]!
+                    ? "vSR: the light line must stay under the strong line."
+                    : `vSR: a number from 0 to ${ceiling}.`,
+                variant: "warning",
+              });
+            else await remote.thresholds({ app: row.app, values }, call());
+          }
+        }
+        await config(index);
+      };
+      const press = async (index: number) => {
+        const row = CONFIG_ROWS[index]!;
+        const snapshot = current();
+        if (!snapshot) return;
+        if (row.kind === "app")
+          await controller.change({
+            apps: { [row.app]: !snapshot.apps[row.app] },
+          });
+        else if (row.kind === "wait") {
+          const next =
+            WAIT_CHOICES[
+              (WAIT_CHOICES.indexOf(snapshot.waits[row.app]) + 1) %
+                WAIT_CHOICES.length
+            ]!;
+          await controller.change({ waits: { [row.app]: next } });
+        } else if (row.kind === "goal")
+          await controller.change({
+            goal: GOALS[
+              (GOALS.indexOf(snapshot.controls.goal) + 1) % GOALS.length
+            ]!,
+          });
+        else if (row.kind === "turns")
+          await controller.change({ turns: !snapshot.controls.turns });
+        else await ask(index);
+      };
+      const reset = async (index: number) => {
+        const row = CONFIG_ROWS[index]!;
+        if (row.kind !== "line") return;
+        setFound((await remote.thresholds({ app: row.app }, call())) as Lines);
+      };
+      const move = (step: number) =>
+        setCursor(
+          (now) => (now + step + CONFIG_ROWS.length) % CONFIG_ROWS.length,
+        );
+      const valueOf = (row: ConfigRow): string => {
+        const snapshot = current();
+        if (!snapshot) return "";
+        if (row.kind === "app") return snapshot.apps[row.app] ? "on" : "off";
+        if (row.kind === "wait") return waitWords(snapshot.waits[row.app]);
+        if (row.kind === "goal") return snapshot.controls.goal;
+        if (row.kind === "turns")
+          return snapshot.controls.turns ? "routed" : "yours";
+        if (row.kind === "every")
+          return snapshot.controls.calibrateEvery
+            ? `${snapshot.controls.calibrateEvery} decisions`
+            : "off";
+        return lineOf(row.app).values[row.index]!.toFixed(2);
+      };
+      const labelOf = (row: ConfigRow): string =>
+        row.kind === "app"
+          ? row.app
+          : row.kind === "wait"
+            ? `${row.app} waits`
+            : row.kind === "goal"
+              ? "router goal"
+              : row.kind === "turns"
+                ? "your turns"
+                : row.kind === "every"
+                  ? "calibrate every"
+                  : `${row.app} · ${LINES[row.app][row.index]![0].toLowerCase()}`;
+      // Whose a threshold is: the options', a calibration's, or yours from here.
+      const noteOf = (row: ConfigRow): string => {
+        if (row.kind !== "line") return "";
+        const line = lineOf(row.app);
+        return line.source === "options"
+          ? ""
+          : `${line.source === "you" ? "yours" : "calibrated"} · options ${line.options[row.index]!.toFixed(2)}`;
+      };
+      const Config = () => {
+        ctx.keymap.layer(() => ({
+          mode: "global",
+          priority: 100,
+          commands: [
+            { title: "Previous setting", bind: "up", run: () => void move(-1) },
+            { title: "Next setting", bind: "down", run: () => void move(1) },
+            {
+              title: "Change the setting",
+              bind: "return",
+              run: () => void press(cursor()),
+            },
+            {
+              title: "Back to the options' thresholds",
+              bind: "r",
+              run: () => void reset(cursor()),
+            },
+          ],
+        }));
+        const tip = () => {
+          const row = CONFIG_ROWS[cursor()]!;
+          return row.kind === "line"
+            ? LINES[row.app][row.index]![1]
+            : row.kind === "app"
+              ? APP_WORDS[row.app][1]
+              : "";
+        };
+        return (
+          <box flexDirection="column" paddingLeft={2} paddingRight={2}>
+            <text fg={tone("text")}>vSR settings</text>
+            <text fg={tone("muted")}>
+              ↑↓ move · enter change · r back to the options · esc close
+            </text>
+            <box flexDirection="column" marginTop={1}>
+              <For each={CONFIG_ROWS}>
+                {(row, index) => (
+                  <text
+                    onMouseUp={() => {
+                      setCursor(index());
+                      void press(index());
+                    }}
+                  >
+                    <Span fg={tone(cursor() === index() ? "info" : "muted")}>
+                      {cursor() === index() ? "› " : "  "}
+                    </Span>
+                    <Span fg={tone(cursor() === index() ? "info" : "text")}>
+                      {labelOf(row).padEnd(28)}
+                    </Span>
+                    <Span
+                      fg={tone(
+                        row.kind === "app" && !current()?.apps[row.app]
+                          ? "muted"
+                          : row.kind === "app"
+                            ? APP_LOOK[row.app].tone
+                            : "text",
+                      )}
+                    >
+                      {valueOf(row).padEnd(14)}
+                    </Span>
+                    <Span fg={tone("muted")}>{noteOf(row)}</Span>
+                  </text>
+                )}
+              </For>
+            </box>
+            <text marginTop={1} marginBottom={1} fg={tone("muted")}>
+              {tip()}
+            </text>
+          </box>
+        );
+      };
+      ctx.renderer.clearSelection();
+      ctx.ui.dialog.show(() => <Config />);
       ctx.ui.dialog.set({ size: "large" });
     }
     async function waits() {
@@ -887,20 +1127,24 @@ export default Plugin.define({
           },
         },
         {
-          id: "vsr.goal",
-          title: "vSR routing goal",
-          slash: { name: "vsr-goal" },
+          id: "vsr.follow",
+          title: "vSR follow the Router listener's profile again",
+          slash: { name: "vsr-follow" },
           palette: true,
+          // As the Claude Code plugin's `/vsr follow`: what you changed goes back to the listener's profile.
           run: async () => {
-            const goal = await ctx.ui.dialog.select({
-              title: "vSR routing goal",
-              current: current()?.controls.goal,
-              options: (["balanced", "quality", "save"] as const).map(
-                (value) => ({ value, title: value }),
-              ),
-            });
-            if (goal) await controller.change({ goal });
+            if (await controller.change({ follow: true }))
+              ctx.ui.toast.show({
+                message: "vSR: follows the listener's profile.",
+              });
           },
+        },
+        {
+          id: "vsr.config",
+          title: "vSR settings: apps, waits, goal, turns and thresholds",
+          slash: { name: "vsr-config" },
+          palette: true,
+          run: () => void config(),
         },
         {
           id: "vsr.turns",
@@ -963,15 +1207,6 @@ export default Plugin.define({
                 message: probeText(result),
               }),
             );
-          },
-        },
-        {
-          id: "vsr.refresh",
-          title: "vSR refresh decisions",
-          slash: { name: "vsr-refresh" },
-          palette: true,
-          run: () => {
-            void controller.refresh();
           },
         },
       ],

@@ -16,6 +16,7 @@ export interface ViewSnapshot extends Snapshot {
     persistence: "durable" | "unavailable";
     goal: Settings["routing"]["goal"];
     turns: boolean;
+    calibrateEvery: number;
     note: string;
   };
   calibration: { at?: number; since: number; remind: boolean };
@@ -27,6 +28,7 @@ export type ControlPatch = {
   waits?: Partial<Settings["waits"]>;
   goal?: Settings["routing"]["goal"];
   turns?: boolean;
+  calibrateEvery?: number;
   follow?: true;
 };
 export interface ViewService {
@@ -559,7 +561,7 @@ export interface CalibrationSuggestion {
   recommend: "apply" | "keep" | "more";
 }
 // Each line's name and what it does, in the Claude Code plugin's words with the agent and OpenCode's tiers.
-const LINES: Record<keyof typeof APP_NAMES, [string, string][]> = {
+export const LINES: Record<keyof typeof APP_NAMES, [string, string][]> = {
   router: [
     ["Light line", "tasks judged easier than this go to the light model."],
     [

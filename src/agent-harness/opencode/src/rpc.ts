@@ -199,10 +199,18 @@ export const Vsr = Rpc.define({
               persistence: { enum: ["durable", "unavailable"] },
               goal: { enum: ["balanced", "quality", "save"] },
               turns: { type: "boolean" },
+              calibrateEvery: { type: "integer", minimum: 0 },
               // What a Router listener's profile changes from the person's settings; empty when nothing.
               note: { type: "string" },
             },
-            required: ["revision", "persistence", "goal", "turns", "note"],
+            required: [
+              "revision",
+              "persistence",
+              "goal",
+              "turns",
+              "calibrateEvery",
+              "note",
+            ],
             additionalProperties: false,
           },
           waits: {
@@ -449,6 +457,32 @@ export const Vsr = Rpc.define({
         additionalProperties: false,
       },
     },
+    // /vsr-config: each app's thresholds now, the options' own, and whose they are; a change sets them as the
+    // person's, or with no values brings the options' back.
+    thresholds: {
+      input: {
+        type: "object",
+        properties: {
+          app,
+          values: { type: "array", items: { type: "number" } },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            app,
+            values: numbers,
+            options: numbers,
+            source: { enum: ["options", "calibration", "you"] },
+          },
+          required: ["app", "values", "options", "source"],
+          additionalProperties: false,
+        },
+      },
+    },
     // Known cases asked again, as the Claude Code plugin's `calibrate probe`: what the decision model now decides.
     calibrationProbe: {
       input: {
@@ -502,6 +536,7 @@ export const Vsr = Rpc.define({
           },
           goal: { enum: ["balanced", "quality", "save"] },
           turns: { type: "boolean" },
+          calibrateEvery: { type: "integer", minimum: 0, maximum: 100000 },
           follow: { const: true },
         },
         required: ["instanceID", "expectedRevision"],

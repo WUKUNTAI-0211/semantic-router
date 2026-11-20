@@ -1,6 +1,8 @@
 # Set up vSR's decision runtime
 
-vSR asks a small decision model about every child task, prompt, read, shell command and answer. This skill gets that model answering on this machine, or points vSR at one that already answers, and hands over to OpenCode's own controls. Run each command yourself, show what it prints, and ask the user only what they decide. Nothing here needs sudo; if a step seems to, stop and tell the user why.
+vSR asks a small decision model about every child task, prompt, read, shell command and answer. This skill gets that model answering on this machine, or points vSR at one that already answers, picks which apps run and their thresholds, writes them, and checks each app, as the Claude Code plugin's `/vsr:setup` does. Run each command yourself, show what it prints, and ask the user only what they decide, with OpenCode's question tool. Nothing here needs sudo; if a step seems to, stop and tell the user why.
+
+vSR gives you two tools for this: `vsr_settings` says vSR's settings with no input and sets what the user chose with input, kept over the plugin options as `/vsr-config` keeps them; `vsr_check` asks one case per enabled app, as `/vsr-check` does.
 
 The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr/venv`, port 8790, so one runtime serves every agent on this machine.
 
@@ -11,18 +13,27 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
    - `curl -s --max-time 3 http://127.0.0.1:8790/health` — a runtime already runs here when this prints `"status":"ready"`; `"loading"` means one is still starting.
    - `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader` (or `rocm-smi --showproductname` on AMD) — a GPU, when there is one.
    - `python3 --version`, `df -h ~` and `free -h` (`sysctl hw.memsize` on macOS).
+   - `vsr_settings` with no input: the apps, waits, router goal and turns, thresholds and runtime vSR runs with now.
 
-   When a runtime already answers, skip to step 5. Done when you know whether one answers, and what this machine has.
+   Done when you know whether a runtime answers, what this machine has, and vSR's settings.
 
-2. **Where the model runs.** Ask the user one question, the first option marked recommended by what step 1 found:
+2. **Recommended or custom.** Ask one question:
+
+   - **Recommended setup (recommended)**: say what it does on this machine from step 1: keep the runtime that answers, or install and run vela3-lite on this machine's GPU, or its CPU when there is none. Every app at its default (check stays off; turn it on later with a GPU or remote runtime) and the default thresholds.
+   - **Custom**: the user picks where the model runs, which apps run, and the thresholds.
+
+   On Recommended, keep a runtime that answers (skip to step 6) or install on the GPU or CPU step 1 found (step 4), then go to step 9 with nothing to change. On Custom, go to step 3. Done when the user picked one.
+
+3. **Where the model runs.** Custom only. Ask the user one question, the first option marked recommended by what step 1 found:
 
    - **This machine's GPU**: fastest; vela3-lite uses about 2 GB of GPU memory.
    - **This machine's CPU**: about 2.3 GB of RAM and 0.1 to 0.25 s per question on an x86 CPU with bf16, up to about 2 s on a laptop or Apple Silicon CPU; at that speed apps often step aside within their wait.
-   - **A runtime on another machine**: nothing is installed. Tell the user plainly that everything the enabled apps check is sent to that host: each read and shell output, fetched page, prompt, child task, shell command and answer. Skip to step 5.
+   - **Keep the running one**, only when a runtime answers already: nothing is installed. Skip to step 6.
+   - **A runtime on another machine**: nothing is installed. Tell the user plainly that everything the enabled apps check is sent to that host: each read and shell output, fetched page, prompt, child task, shell command and answer. Skip to step 6.
 
    Done when the user picked one. An Apple GPU cannot run vela3 yet, so a Mac runs it on the CPU.
 
-3. **Install**, only when the user agrees to the download: about 200 MB of CPU torch, or 3 to 4 GB of CUDA or ROCm torch (5 to 6 GB on disk; a few minutes on a fast connection), plus about 1.8 GB of model weights on first start. Use a Python 3.10 or later; skip any command whose result already exists (`~/.local/share/vsr/venv/bin/vllm-srun` means it is installed). Each takes minutes, so run the pip commands in the background and wait for them.
+4. **Install**, only when the user agrees to the download: about 200 MB of CPU torch, or 3 to 4 GB of CUDA or ROCm torch (5 to 6 GB on disk; a few minutes on a fast connection), plus about 1.8 GB of model weights on first start. Use a Python 3.10 or later; skip any command whose result already exists (`~/.local/share/vsr/venv/bin/vllm-srun` means it is installed). Each takes minutes, so run the pip commands in the background and wait for them.
 
    ```bash
    python3 -m venv ~/.local/share/vsr/venv
@@ -37,7 +48,7 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
 
    On failure, show the last pip lines and stop. For ROCm, torch from PyPI is a CUDA build: point the user to pytorch.org for the ROCm wheel index. Done when `~/.local/share/vsr/venv/bin/vllm-srun --help` prints its usage.
 
-4. **Start it.** Ask whether it should run for this login only (it stops at logout or reboot) or keep running across reboots. For this login, with `cpu`, `cuda` or `rocm` as the device:
+5. **Start it.** Ask whether it should run for this login only (it stops at logout or reboot) or keep running across reboots. For this login, with `cpu`, `cuda` or `rocm` as the device:
 
    ```bash
    nohup ~/.local/share/vsr/venv/bin/vllm-srun serve vllm-sr/vela3-lite --device <device> --host 127.0.0.1 --port 8790 >> ~/.local/share/vsr/runtime.log 2>&1 &
@@ -45,12 +56,28 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
 
    Across reboots on Linux, write that command as the `ExecStart` of a systemd user unit at `~/.config/systemd/user/vsr-runtime.service` (with `Restart=on-failure` and the log appended to `~/.local/share/vsr/runtime.log`), show it to the user, and only on their yes run `systemctl --user daemon-reload && systemctl --user enable --now vsr-runtime`. On macOS, the same as a launchd agent in `~/Library/LaunchAgents`. Done when the process runs.
 
-5. **Wait until it answers.** The first start downloads the model, which can take several minutes. Poll `curl -s --max-time 3 http://127.0.0.1:8790/health` every 10 seconds, up to 15 minutes, until it prints `"status":"ready"`. For a remote runtime, use the user's URL with `/v1/decisions` replaced by `/health`; a Router listener answers `"status":"ok"` there and a hosted API has no `/health`, so for those `/v1/models` listing a model means it answers. If it never answers, show the last lines of `~/.local/share/vsr/runtime.log`. Done when it is ready.
+6. **Wait until it answers.** The first start downloads the model, which can take several minutes. Poll `curl -s --max-time 3 http://127.0.0.1:8790/health` every 10 seconds, up to 15 minutes, until it prints `"status":"ready"`. For a remote runtime, use the user's URL with `/v1/decisions` replaced by `/health`; a Router listener answers `"status":"ok"` there and a hosted API has no `/health`, so for those `/v1/models` listing a model means it answers. If it never answers, show the last lines of `~/.local/share/vsr/runtime.log`. Done when it is ready.
 
-6. **Hand over.** Tell the user, in this order:
+   For a runtime on another machine, tell the user to run `/connect`, pick **vSR decision runtime**, then **Runtime with a token** (or **without a token**) with its URL; OpenCode keeps the token in its own credential store, so never ask the user to paste it into the chat, and leave the model empty unless the runtime serves several. Wait until they say it is done. A runtime on this machine needs no `/connect`: vSR asks `http://127.0.0.1:8790/v1/decisions` by default.
 
-   - Run `/connect`, pick **vSR decision runtime**, then **Runtime without a token** for this machine (URL `http://127.0.0.1:8790/v1/decisions`), or **Runtime with a token** for one that needs a key. OpenCode keeps the token in its own credential store; never ask the user to paste it into the chat. Leave the model empty unless the runtime serves several.
-   - Run `/vsr-check` in a session: it asks one case per enabled app and shows whether each decides as it does on vela3-lite, and how long each took.
-   - `/vsr-apps` turns apps on or off; check is off by default, and on a CPU runtime a long answer can outlast its wait.
+7. **Apps.** Custom only. Ask one question, multiple choice, one line per app, the ones on by default marked recommended:
 
-   Done when the user has these steps.
+   - **router** (picks the model and effort of each new subagent from your three tiers by its task's difficulty), **escalate** (after you push back, the agent re-checks and the next subagent goes one tier up): both need `routing.tiers`, three models from one provider, in the plugin options in `opencode.jsonc`; when there are none, say so and offer to add them there.
+   - **redact** (hides personal data and secrets in read and shell output), **shield** (warns the agent when a file or page tries to give it instructions), **guard** (asks you before risky shell commands).
+   - **check** (marks an answer that claims more than the agent read; off by default, slow on a CPU runtime).
+
+   Add to the question: each question costs about 0.1 to 0.2 s on an x86 CPU, less on a GPU, and redact and shield run on every read. Done when every app is on or off.
+
+8. **Thresholds.** Custom only. Ask one question: **Defaults (recommended)**, measured on vela3-lite, or **Advanced**. For Advanced, show the threshold lines step 1's `vsr_settings` listed for the enabled apps, each with its value and what it does, and let the user name the values to change. Done when you have the list of changed thresholds, possibly empty.
+
+9. **Write.** Call `vsr_settings` once with what steps 7 and 8 chose: `apps` with each app on or off, and `thresholds` with each app whose lines changed (all of that app's lines, in the order `vsr_settings` lists them). On Recommended, call it with nothing to change. Show what it says. Done when it shows the settings the user chose.
+
+10. **Check.** Call `vsr_check` and show each line. An app that has no answer, or decided otherwise than on vela3-lite, is said plainly with what to do: a runtime that does not answer (step 6), a slow one (a shorter wait in `/vsr-config`, or a GPU or remote runtime), a model that answers no score questions (the router steps aside). Done when every enabled app answered, or the user knows why one did not.
+
+11. **Hand over.** Tell the user, in this order:
+
+- `/vsr` opens the decisions panel; its top turns apps on and off and picks their waits.
+- `/vsr-config` changes any setting later, thresholds included; `/vsr-check` checks the runtime again.
+- After some use, `/vsr-calibrate` fits the thresholds to their own answers.
+
+Done when the user has these steps.

@@ -14,6 +14,7 @@ type Saved = Values & {
   revision: number;
   pinned?: Field[];
   turns?: boolean;
+  calibrateEvery?: number;
 };
 export type ControlResult =
   | { saved: true; revision: number }
@@ -30,8 +31,8 @@ export class Controls {
   private persistence: "durable" | "unavailable" = "durable";
   private pinned: Field[] = [];
   private readonly pin: (values: Partial<Fields>) => void;
-  // Whether the plugin options name routing.turns: then the saved choice does not override them.
-  private readonly turnsNamed: boolean;
+  // What the plugin options name of turns and calibrateEvery: then the saved choice does not override them.
+  private readonly named: { turns?: boolean; calibrateEvery?: boolean };
   // Told when the person turns the routing of their turns on or off, a repeat of the same choice included.
   turned: (on: boolean) => void = () => {};
   private readonly unpin: () => Promise<void>;
@@ -42,9 +43,9 @@ export class Controls {
     changed: () => void,
     pin: (values: Partial<Fields>) => void = () => {},
     unpin: () => Promise<void> = async () => {},
-    turnsNamed = false,
+    named: { turns?: boolean; calibrateEvery?: boolean } = {},
   ) {
-    this.turnsNamed = turnsNamed;
+    this.named = named;
     this.settings = settings;
     this.instanceID = instanceID;
     this.persist = persist;
@@ -66,6 +67,7 @@ export class Controls {
       persistence: this.persistence,
       goal: this.settings.routing.goal,
       turns: this.settings.routing.turns,
+      calibrateEvery: this.settings.calibrateEvery,
     };
   }
   private parse(input: Record<string, unknown>): Values {
@@ -128,7 +130,11 @@ export class Controls {
         (saved.pinned !== undefined &&
           (!Array.isArray(saved.pinned) ||
             saved.pinned.some((field) => !FIELDS.includes(field as Field)))) ||
-        (saved.turns !== undefined && typeof saved.turns !== "boolean")
+        (saved.turns !== undefined && typeof saved.turns !== "boolean") ||
+        (saved.calibrateEvery !== undefined &&
+          (!Number.isInteger(saved.calibrateEvery) ||
+            (saved.calibrateEvery as number) < 0 ||
+            (saved.calibrateEvery as number) > 100_000))
       )
         throw new Error("Invalid saved controls");
       if (saved.base !== this.base) return; // Explicit changes to configured defaults win.
@@ -136,10 +142,15 @@ export class Controls {
       this.pinned = (saved.pinned as Field[] | undefined) ?? [];
       this.assign(
         value,
-        typeof saved.turns === "boolean" && !this.turnsNamed
+        typeof saved.turns === "boolean" && !this.named.turns
           ? saved.turns
           : this.settings.routing.turns,
       );
+      if (
+        typeof saved.calibrateEvery === "number" &&
+        !this.named.calibrateEvery
+      )
+        this.settings.calibrateEvery = saved.calibrateEvery;
       this.revision = saved.revision as number;
     } catch {
       this.persistence = "unavailable";
@@ -159,13 +170,18 @@ export class Controls {
               "waits",
               "goal",
               "turns",
+              "calibrateEvery",
               "follow",
             ].includes(key),
         ) ||
-        !["apps", "waits", "goal", "turns", "follow"].some((key) =>
-          Object.hasOwn(input, key),
+        !["apps", "waits", "goal", "turns", "calibrateEvery", "follow"].some(
+          (key) => Object.hasOwn(input, key),
         ) ||
         (input.turns !== undefined && typeof input.turns !== "boolean") ||
+        (input.calibrateEvery !== undefined &&
+          (!Number.isInteger(input.calibrateEvery) ||
+            (input.calibrateEvery as number) < 0 ||
+            (input.calibrateEvery as number) > 100_000)) ||
         (input.follow !== undefined &&
           (input.follow !== true ||
             input.apps !== undefined ||
@@ -190,6 +206,10 @@ export class Controls {
         typeof input.turns === "boolean"
           ? input.turns
           : this.settings.routing.turns;
+      const calibrateEvery =
+        typeof input.calibrateEvery === "number"
+          ? input.calibrateEvery
+          : this.settings.calibrateEvery;
       const pinned = input.follow
         ? []
         : FIELDS.filter(
@@ -207,6 +227,7 @@ export class Controls {
           revision,
           ...(pinned.length ? { pinned } : {}),
           turns,
+          calibrateEvery,
         });
       } catch {
         this.persistence = "unavailable";
@@ -214,6 +235,7 @@ export class Controls {
       }
       this.pinned = pinned;
       this.assign(next, turns);
+      this.settings.calibrateEvery = calibrateEvery;
       this.revision = revision;
       this.persistence = "durable";
       if (input.follow) await this.unpin().catch(() => {});

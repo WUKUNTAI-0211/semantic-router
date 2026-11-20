@@ -181,7 +181,7 @@ test("turns are saved beside the controls, kept the person's, and an option nami
     () => {},
     () => {},
     async () => {},
-    true,
+    { turns: true },
   ).load(async () => saved);
   assert.equal(named.routing.turns, false, "the option the person named wins");
 

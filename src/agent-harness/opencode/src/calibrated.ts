@@ -55,18 +55,23 @@ interface Saved {
   version: 1;
   // The options' thresholds when it was calibrated: changing them in opencode.json drops the calibration.
   base: string;
-  at: number;
+  // When the last calibration was applied; none when only /vsr-config set thresholds.
+  at?: number;
   // The decision model the last calibration was made with, when it was known.
   model?: string;
   thresholds: Partial<Thresholds>;
+  // The apps whose thresholds the person set in /vsr-config rather than a calibration fitted.
+  manual?: App[];
 }
 export interface CalibrationState {
   at?: number;
   model?: string;
   apps: App[];
+  manual: App[];
 }
 
-// Calibrated thresholds, kept in plugin storage and applied over the options' own.
+// Thresholds kept in plugin storage and applied over the options' own: the ones a calibration fitted and the ones the
+// person set in /vsr-config, as the Claude Code plugin's calibration and /config write the same settings.
 export class Calibrated {
   private readonly settings: Settings;
   private readonly base: string;
@@ -75,6 +80,8 @@ export class Calibrated {
     set(key: string, value: Saved): Promise<void>;
   };
   private saved: Saved | undefined;
+  // The options' own thresholds, which a reset in /vsr-config brings back.
+  private readonly options: Thresholds;
   constructor(
     settings: Settings,
     store: {
@@ -84,7 +91,8 @@ export class Calibrated {
   ) {
     this.settings = settings;
     this.store = store;
-    this.base = JSON.stringify(thresholdsOf(settings));
+    this.options = thresholdsOf(settings);
+    this.base = JSON.stringify(this.options);
   }
   async load(): Promise<void> {
     let value: unknown;
@@ -97,9 +105,12 @@ export class Calibrated {
       !isRecord(value) ||
       value.version !== 1 ||
       value.base !== this.base ||
-      typeof value.at !== "number" ||
+      (value.at !== undefined && typeof value.at !== "number") ||
       (value.model !== undefined && typeof value.model !== "string") ||
-      !isRecord(value.thresholds)
+      !isRecord(value.thresholds) ||
+      (value.manual !== undefined &&
+        (!Array.isArray(value.manual) ||
+          value.manual.some((app) => !APPS.includes(app as App))))
     )
       return;
     const thresholds: Partial<Thresholds> = {};
@@ -112,9 +123,12 @@ export class Calibrated {
     this.saved = {
       version: 1,
       base: this.base,
-      at: value.at,
+      ...(typeof value.at === "number" ? { at: value.at } : {}),
       ...(typeof value.model === "string" ? { model: value.model } : {}),
       thresholds,
+      ...(Array.isArray(value.manual) && value.manual.length
+        ? { manual: value.manual as App[] }
+        : {}),
     };
     for (const [app, values] of Object.entries(thresholds))
       assign(this.settings, app as App, values);
@@ -127,22 +141,57 @@ export class Calibrated {
     at = Date.now(),
   ): Promise<void> {
     if (!valid(app, [...values])) throw new Error("Invalid thresholds");
-    const next: Saved = {
-      version: 1,
-      base: this.base,
+    await this.save(app, [...values], {
       at,
       ...(model ? { model } : {}),
-      thresholds: { ...this.saved?.thresholds, [app]: [...values] },
+      manual: (this.saved?.manual ?? []).filter((one) => one !== app),
+    });
+  }
+  // Thresholds the person set in /vsr-config: kept and applied like a calibration's, and named as theirs.
+  async set(app: App, values: readonly number[]): Promise<void> {
+    if (!valid(app, [...values])) throw new Error("Invalid thresholds");
+    await this.save(app, [...values], {
+      manual: [...new Set([...(this.saved?.manual ?? []), app])],
+    });
+  }
+  // Back to the options' own thresholds for an app.
+  async reset(app: App): Promise<void> {
+    await this.save(app, undefined, {
+      manual: (this.saved?.manual ?? []).filter((one) => one !== app),
+    });
+  }
+  private async save(
+    app: App,
+    values: number[] | undefined,
+    change: Partial<Saved>,
+  ): Promise<void> {
+    const thresholds = { ...this.saved?.thresholds };
+    if (values) thresholds[app] = values;
+    else delete thresholds[app];
+    const { manual, ...rest } = { ...this.saved, ...change };
+    const next: Saved = {
+      ...rest,
+      version: 1,
+      base: this.base,
+      thresholds,
+      ...(manual?.length ? { manual } : {}),
     };
     await this.store.set("calibration.v1", next);
     this.saved = next;
-    assign(this.settings, app, values);
+    assign(this.settings, app, values ?? this.options[app]);
+  }
+  // The options' own thresholds for an app.
+  optionsOf(app: App): number[] {
+    return [...this.options[app]];
   }
   state(): CalibrationState {
     return {
-      ...(this.saved ? { at: this.saved.at } : {}),
+      ...(this.saved?.at === undefined ? {} : { at: this.saved.at }),
       ...(this.saved?.model ? { model: this.saved.model } : {}),
-      apps: Object.keys(this.saved?.thresholds ?? {}) as App[],
+      apps: (Object.keys(this.saved?.thresholds ?? {}) as App[]).filter(
+        (app) => !this.saved?.manual?.includes(app),
+      ),
+      manual: [...(this.saved?.manual ?? [])],
     };
   }
 }

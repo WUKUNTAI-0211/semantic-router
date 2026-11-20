@@ -144,6 +144,15 @@ export async function fixture(
                 : "cat fixture.txt",
         ...(label === "BACKGROUND" ? { background: true } : {}),
       };
+    } else if (label === "SETTINGS" || label === "CHECK") {
+      // The setup skill's tools, called as OpenCode's Code Mode exposes a plugin's tools to the agent.
+      name = "execute";
+      args = {
+        code:
+          label === "SETTINGS"
+            ? "return await tools.vsr_settings({ apps: { check: true }, thresholds: { guard: [0.8] } })"
+            : "return await tools.vsr_check()",
+      };
     } else if (label === "SUBAGENT") {
       // An Explore subagent that reads the fixture file in its own session.
       name = "subagent";

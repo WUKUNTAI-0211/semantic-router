@@ -1,5 +1,6 @@
 import { registerRouting } from "./routing-hooks.ts";
 import { Turns } from "./turns.ts";
+import { LINES, report } from "./view.ts";
 import type { Price } from "./turns.ts";
 import { knownPrices } from "./prices.ts";
 import { SessionArchive } from "./archive.ts";
@@ -102,7 +103,7 @@ export default Plugin.define({
         id: "vsr-setup",
         name: "vsr-setup",
         description:
-          "Installs and starts vSR's decision runtime (vllm-srun with vela3-lite) on this machine's GPU or CPU, or points vSR at one that already answers, then hands over to /connect and /vsr-check. Use when vSR was just installed, when /vsr-check says the runtime does not answer, or when the user wants to change where vSR's decision model runs.",
+          "Guided setup for vSR, as the Claude Code plugin's /vsr:setup: installs and starts vSR's decision runtime (vllm-srun with vela3-lite) on this machine's GPU or CPU, or points vSR at one that already answers, picks which of its six apps run and their thresholds, writes them, and checks each app against the runtime. Use when vSR was just installed, when /vsr-check says the runtime does not answer, or when the user wants to change vSR's runtime, apps or thresholds.",
         path: skillPath,
         content: skillText,
         // The schema brands its IDs and paths; these are plain strings of the right form.
@@ -193,7 +194,11 @@ export default Plugin.define({
       () => decisions.changed(),
       (values) => listener.pin(values),
       () => listener.unpin(),
-      routingNamed.turns !== undefined,
+      {
+        turns: routingNamed.turns !== undefined,
+        calibrateEvery:
+          isRecord(ctx.options) && ctx.options.calibrateEvery !== undefined,
+      },
     );
     await controls.load(() => ctx.storage.get("controls.v1"));
     // Your own turns, routed when `routing.turns` is on; the view reads where they run.
@@ -228,6 +233,18 @@ export default Plugin.define({
       if (on) turns.resume();
     };
     listener.noted = () => decisions.changed();
+    // /vsr-check, and the setup skill's check: the runtime in use, then one case per enabled app through its hook's path.
+    const checkRuntime = async (signal: AbortSignal) => {
+      await connect();
+      const listed = await runtime.discover(3000, signal);
+      const probes = await verify(settings, runtime, signal);
+      await stateChanged();
+      return {
+        source: runtime.status().source,
+        models: listed.ok ? listed.value.map((model) => model.id) : [],
+        probes,
+      };
+    };
     const registration = await ctx.rpc.register(Vsr, {
       snapshot: async (input) => {
         const found = decisions.snapshot(sessionID(input));
@@ -258,17 +275,7 @@ export default Plugin.define({
         return result;
       },
       // /vsr-check: the runtime in use, then one case per enabled app through the path its hook takes.
-      verify: async (_input, request) => {
-        await connect();
-        const listed = await runtime.discover(3000, request.signal);
-        const probes = await verify(settings, runtime, request.signal);
-        await stateChanged();
-        return {
-          source: runtime.status().source,
-          models: listed.ok ? listed.value.map((model) => model.id) : [],
-          probes,
-        };
-      },
+      verify: async (_input, request) => checkRuntime(request.signal),
       calibrationReport: async (_input, request) => {
         const lines = log.all();
         const labels = labelsOf(lines);
@@ -375,6 +382,27 @@ export default Plugin.define({
         await stateChanged();
         return { applied: true, suggestion: found };
       },
+      thresholds: async (input) => {
+        if (isRecord(input) && input.app !== undefined) {
+          const app = appOf(input);
+          if (Array.isArray(input.values))
+            await calibrated.set(app, input.values as number[]);
+          else await calibrated.reset(app);
+          decisions.changed();
+        }
+        const state = calibrated.state();
+        const now = thresholdsOf(settings);
+        return APPS.map((app) => ({
+          app,
+          values: now[app],
+          options: calibrated.optionsOf(app),
+          source: state.manual.includes(app)
+            ? ("you" as const)
+            : state.apps.includes(app)
+              ? ("calibration" as const)
+              : ("options" as const),
+        }));
+      },
       calibrationProbe: async (input, request) => {
         const model = await modelNow(request.signal);
         const asked = (input as { apps?: App[] }).apps;
@@ -457,6 +485,107 @@ export default Plugin.define({
           .catch(() => {});
       }
     };
+    // The setup skill's tools, as the Claude Code plugin's setup scripts: `vsr_settings` writes what the person picked
+    // where /vsr-config keeps it, and `vsr_check` asks each app's case, as its `runtime.py probe --smoke` does.
+    const settingsText = () => {
+      const state = calibrated.state();
+      const lines = thresholdsOf(settings);
+      return [
+        `apps: ${APPS.map((app) => `${app} ${settings.apps[app] ? "on" : "off"}`).join(", ")}`,
+        `waits: ${(["redact", "shield", "guard"] as const).map((app) => `${app} ${settings.waits[app] === "done" ? "until done" : `${(settings.waits[app] as number) / 1000}s`}`).join(", ")}`,
+        `router: goal ${settings.routing.goal}, your turns ${settings.routing.turns ? "routed" : "yours"}, ${settings.routing.tiers.length ? "tiers " + settings.routing.tiers.map((tier) => tier.model).join(", ") : "no tiers in the options"}`,
+        "thresholds, each line in the order `thresholds` takes them:",
+        ...APPS.flatMap((app) =>
+          LINES[app].map(
+            ([name, does], index) =>
+              `- ${app} ${name.toLowerCase()} ${lines[app][index]!.toFixed(2)}${state.manual.includes(app) ? " (set by the user)" : state.apps.includes(app) ? " (calibrated)" : ""}: ${does}`,
+          ),
+        ),
+        `runtime: ${settings.runtimeUrl}${settings.runtimeModel ? ` · model ${settings.runtimeModel}` : ""}`,
+      ].join("\n");
+    };
+    const appFlags = {
+      type: "object",
+      properties: Object.fromEntries(
+        APPS.map((app) => [app, { type: "boolean" }]),
+      ),
+      additionalProperties: false,
+    };
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "vsr_settings",
+        description:
+          "vSR's settings: with no input, says which apps are on, how long redact, shield and guard wait, the router's goal and turns, each app's thresholds and the runtime. With input, sets those the user chose in the vsr-setup skill, kept over the plugin options as /vsr-config keeps them. `reset` brings an app's thresholds back to the options'.",
+        input: {
+          type: "object",
+          properties: {
+            apps: appFlags,
+            waits: {
+              type: "object",
+              properties: Object.fromEntries(
+                ["redact", "shield", "guard"].map((app) => [
+                  app,
+                  { enum: [1000, 2000, 3000, "done"] },
+                ]),
+              ),
+              additionalProperties: false,
+            },
+            goal: { enum: ["balanced", "quality", "save"] },
+            turns: { type: "boolean" },
+            thresholds: {
+              type: "object",
+              properties: Object.fromEntries(
+                APPS.map((app) => [
+                  app,
+                  { type: "array", items: { type: "number" }, maxItems: 3 },
+                ]),
+              ),
+              additionalProperties: false,
+            },
+            reset: { type: "array", items: { enum: [...APPS] } },
+          },
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          const asked = isRecord(input) ? input : {};
+          const said: string[] = [];
+          const controlled = Object.fromEntries(
+            ["apps", "waits", "goal", "turns"]
+              .filter((key) => asked[key] !== undefined)
+              .map((key) => [key, asked[key]]),
+          );
+          if (Object.keys(controlled).length) {
+            const done = await controls.update({
+              instanceID: decisions.snapshot("").instanceID,
+              expectedRevision: controls.state().revision,
+              ...controlled,
+            });
+            if (!done.saved) said.push(`not saved: ${done.reason}`);
+          }
+          for (const [app, values] of Object.entries(
+            isRecord(asked.thresholds) ? asked.thresholds : {},
+          ))
+            await calibrated
+              .set(app as App, values as number[])
+              .catch(() =>
+                said.push(`${app}: thresholds out of range, not set`),
+              );
+          for (const app of Array.isArray(asked.reset) ? asked.reset : [])
+            await calibrated.reset(app as App);
+          decisions.changed();
+          return { content: [...said, settingsText()].join("\n") };
+        },
+      } as unknown as Parameters<typeof editor.add>[0]);
+      editor.add({
+        name: "vsr_check",
+        description:
+          "Checks vSR's decision runtime: lists its models, then asks one case per enabled app through the path its hook takes and says whether each decided as it does on vela3-lite, and how long it took. The same check as /vsr-check.",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        execute: async (_input: unknown, context: { signal: AbortSignal }) => ({
+          content: report(await checkRuntime(context.signal)),
+        }),
+      } as unknown as Parameters<typeof editor.add>[0]);
+    });
     const closeRouting = await registerRouting(
       ctx,
       settings,
