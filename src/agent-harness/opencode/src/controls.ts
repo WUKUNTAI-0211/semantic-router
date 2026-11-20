@@ -15,7 +15,13 @@ type Saved = Values & {
   pinned?: Field[];
   turns?: boolean;
   calibrateEvery?: number;
+  downgradeConfidence?: number;
 };
+const confidence = (value: unknown) =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= 1;
 export type ControlResult =
   | { saved: true; revision: number }
   | { saved: false; reason: "stale" | "invalid" | "storage" };
@@ -31,8 +37,12 @@ export class Controls {
   private persistence: "durable" | "unavailable" = "durable";
   private pinned: Field[] = [];
   private readonly pin: (values: Partial<Fields>) => void;
-  // What the plugin options name of turns and calibrateEvery: then the saved choice does not override them.
-  private readonly named: { turns?: boolean; calibrateEvery?: boolean };
+  // What the plugin options name of these: then the saved choice does not override them.
+  private readonly named: {
+    turns?: boolean;
+    calibrateEvery?: boolean;
+    downgradeConfidence?: boolean;
+  };
   // Told when the person turns the routing of their turns on or off, a repeat of the same choice included.
   turned: (on: boolean) => void = () => {};
   private readonly unpin: () => Promise<void>;
@@ -43,7 +53,11 @@ export class Controls {
     changed: () => void,
     pin: (values: Partial<Fields>) => void = () => {},
     unpin: () => Promise<void> = async () => {},
-    named: { turns?: boolean; calibrateEvery?: boolean } = {},
+    named: {
+      turns?: boolean;
+      calibrateEvery?: boolean;
+      downgradeConfidence?: boolean;
+    } = {},
   ) {
     this.named = named;
     this.settings = settings;
@@ -68,6 +82,7 @@ export class Controls {
       goal: this.settings.routing.goal,
       turns: this.settings.routing.turns,
       calibrateEvery: this.settings.calibrateEvery,
+      downgradeConfidence: this.settings.routing.downgradeConfidence,
     };
   }
   private parse(input: Record<string, unknown>): Values {
@@ -134,7 +149,9 @@ export class Controls {
         (saved.calibrateEvery !== undefined &&
           (!Number.isInteger(saved.calibrateEvery) ||
             (saved.calibrateEvery as number) < 0 ||
-            (saved.calibrateEvery as number) > 100_000))
+            (saved.calibrateEvery as number) > 100_000)) ||
+        (saved.downgradeConfidence !== undefined &&
+          !confidence(saved.downgradeConfidence))
       )
         throw new Error("Invalid saved controls");
       if (saved.base !== this.base) return; // Explicit changes to configured defaults win.
@@ -151,6 +168,11 @@ export class Controls {
         !this.named.calibrateEvery
       )
         this.settings.calibrateEvery = saved.calibrateEvery;
+      if (
+        typeof saved.downgradeConfidence === "number" &&
+        !this.named.downgradeConfidence
+      )
+        this.settings.routing.downgradeConfidence = saved.downgradeConfidence;
       this.revision = saved.revision as number;
     } catch {
       this.persistence = "unavailable";
@@ -171,12 +193,21 @@ export class Controls {
               "goal",
               "turns",
               "calibrateEvery",
+              "downgradeConfidence",
               "follow",
             ].includes(key),
         ) ||
-        !["apps", "waits", "goal", "turns", "calibrateEvery", "follow"].some(
-          (key) => Object.hasOwn(input, key),
-        ) ||
+        ![
+          "apps",
+          "waits",
+          "goal",
+          "turns",
+          "calibrateEvery",
+          "downgradeConfidence",
+          "follow",
+        ].some((key) => Object.hasOwn(input, key)) ||
+        (input.downgradeConfidence !== undefined &&
+          !confidence(input.downgradeConfidence)) ||
         (input.turns !== undefined && typeof input.turns !== "boolean") ||
         (input.calibrateEvery !== undefined &&
           (!Number.isInteger(input.calibrateEvery) ||
@@ -210,6 +241,10 @@ export class Controls {
         typeof input.calibrateEvery === "number"
           ? input.calibrateEvery
           : this.settings.calibrateEvery;
+      const downgradeConfidence =
+        typeof input.downgradeConfidence === "number"
+          ? input.downgradeConfidence
+          : this.settings.routing.downgradeConfidence;
       const pinned = input.follow
         ? []
         : FIELDS.filter(
@@ -228,6 +263,7 @@ export class Controls {
           ...(pinned.length ? { pinned } : {}),
           turns,
           calibrateEvery,
+          downgradeConfidence,
         });
       } catch {
         this.persistence = "unavailable";
@@ -236,6 +272,7 @@ export class Controls {
       this.pinned = pinned;
       this.assign(next, turns);
       this.settings.calibrateEvery = calibrateEvery;
+      this.settings.routing.downgradeConfidence = downgradeConfidence;
       this.revision = revision;
       this.persistence = "durable";
       if (input.follow) await this.unpin().catch(() => {});

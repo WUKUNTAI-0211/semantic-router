@@ -245,7 +245,7 @@ test("your turns move with the router, a model you pick pauses them, and off bri
     variant: "high",
   });
 
-  // A model you pick pauses the router until /vsr-turns on.
+  // A model you pick pauses the router until you pick routed again.
   turns.picked("s", { providerID: "p", id: "light" });
   assert.deepEqual(turns.view("s"), { on: true, paused: "p/light" });
   const asked = fake.asked.length;

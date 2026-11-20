@@ -235,6 +235,8 @@ export class Listener {
   note = "";
   // Told when the note changes, so the decision view shows it.
   noted: () => void = () => {};
+  // Whether the runtime is a Router listener that publishes a vsr profile, which /vsr-config can follow again.
+  routed = false;
   constructor(
     settings: Settings,
     runtime: Pick<RuntimeClient, "listing" | "rules" | "listenerKey">,
@@ -302,6 +304,7 @@ export class Listener {
     if (!result.ok && !(result.code === "http" && result.status === 404))
       return await this.restore();
     const listing = result.ok ? result.value : {};
+    this.routed = isRecord(listing) && isRecord(listing.vsr);
     const profile = profileOf(listing);
     const changed: Partial<Values> = {};
     const next = { ...this.base };

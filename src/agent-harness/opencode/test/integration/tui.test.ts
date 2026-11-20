@@ -21,23 +21,22 @@ test(
         { at: 3000, keys: "\r" }, // The panel.
         { at: 3500, keys: "\u0018" }, // ctrl+x ←: back from the panel to the prompt.
         { at: 3700, keys: "\u001b[D" },
-        { at: 4000, keys: "/vsr-apps" },
+        { at: 4000, keys: "/vsr-config" },
         { at: 4500, keys: "\r" },
-        { at: 5000, keys: "\u001b[B\r" }, // Check is the second switch,
-        { at: 5400, keys: "\u001b" }, // and Esc closes the switches.
-        { at: 6000, keys: "/vsr-waits" },
-        { at: 6500, keys: "\r" },
-        { at: 7000, keys: "\r" },
-        { at: 7500, keys: "\u001b[B\r" }, // Strict is the final option.
+        { at: 5000, keys: "\u001b[B\r" }, // Check is the second row,
+        { at: 5600, keys: "\u001b[B".repeat(5) + "\r" }, // redact waits: 3s → until done,
+        { at: 6200, keys: "\u001b" }, // and Esc closes the settings.
         { at: 8500, keys: "\u0018" }, // ctrl+x →: into the panel.
         { at: 8700, keys: "\u001b[C" },
         { at: 9200, keys: "\u001b[B" }, // Picks the newest decision.
         { at: 9600, keys: "2" }, // Its second answer: wrong call.
         { at: 10200, keys: "\u0018" },
         { at: 10400, keys: "\u001b[D" },
-        { at: 11000, keys: "/vsr-check" },
+        { at: 11000, keys: "/vsr-config" },
         { at: 11500, keys: "\r" },
-        { at: 13000, keys: "\r" }, // Close its report.
+        { at: 12000, keys: "\u001b[A\r" }, // Its last row checks the runtime.
+        { at: 13500, keys: "\r" }, // Close the report,
+        { at: 14200, keys: "\u001b" }, // and the settings it reopens.
         { at: 16000, keys: "/vsr" },
         { at: 16500, keys: "\r" },
         { at: 17500, resize: [46, 161] },
@@ -47,7 +46,7 @@ test(
     assert.ok(
       screen.text.includes("vSR decision runtime") &&
         screen.text.includes("Runtime: from the plugin options"),
-      "/vsr-check reports the runtime check: " + screen.text.slice(-8000),
+      "/vsr-config checks the runtime: " + screen.text.slice(-8000),
     );
     assert.ok(screen.text.includes("vSR decisions"), screen.text.slice(-8000));
     assert.ok(screen.text.includes("subagents "), screen.text.slice(-8000));
@@ -89,14 +88,14 @@ test(
       "UI rendering and controls must not generate model requests",
     );
     const asked = native.states.slice(classifications);
-    assert.ok(asked.length > 0, "/vsr-check asks the runtime");
+    assert.ok(asked.length > 0, "the runtime check asks the runtime");
     assert.ok(
       asked.every((state) =>
         ["Ticket #1042", "Acme Payments SDK", "No, task 2 is wrong"].some(
           (sample) => state.includes(sample),
         ),
       ),
-      "only /vsr-check's cases are classified, never the rendering: " +
+      "only the runtime check's cases are classified, never the rendering: " +
         JSON.stringify(asked),
     );
   },
@@ -120,7 +119,7 @@ test(
         { at: 3000, keys: "\r" },
         { at: 3500, keys: "\u0018" },
         { at: 3700, keys: "\u001b[D" },
-        { at: 12000, keys: "/vsr-apps" },
+        { at: 12000, keys: "/vsr-config" },
         { at: 12500, keys: "\r" },
         { at: 13000, keys: "\u001b[B\r" },
         { at: 13400, keys: "\u001b" },
@@ -408,8 +407,10 @@ test(
         ...click("○ check", (row) => /apps +[●○] guard/.test(row), 3500),
         ...click("1s", (row) => /shield waits/.test(row), 4500),
         ...click("save", (row) => /router goal/.test(row), 5500),
+        // The runtime line checks the runtime, as /vsr-config's last row does.
+        ...click("runtime", (row) => /runtime reachable/.test(row), 6500),
       ],
-      7,
+      9,
     );
     const snapshot = (await native.rpc("snapshot", {
       sessionID: run.sessionID,
@@ -421,6 +422,11 @@ test(
       clicked.last,
       /● check/,
       "the switch shows it on: " + clicked.last,
+    );
+    assert.ok(
+      clicked.text.includes("vSR decision runtime") &&
+        clicked.text.includes("Runtime: from the plugin options"),
+      "a click on the runtime line checks it: " + clicked.text.slice(-4000),
     );
   },
 );
@@ -438,17 +444,33 @@ test(
         { at: 2500, keys: "/vsr-config" },
         { at: 3000, keys: "\r" },
         { at: 4000, keys: down(1) + "\r" }, // check: on
-        { at: 5000, keys: down(6) + "\r" }, // shield waits: 2s → 3s
+        { at: 4600, keys: down(3) + "\r" }, // router: on
+        { at: 5200, keys: down(3) + "\r" }, // shield waits: 2s → 3s
         { at: 6000, keys: down(4) + "\r" }, // guard · review line: asked for
         { at: 7000, keys: "\u007f".repeat(6) + "0.8" },
         { at: 7600, keys: "\r" },
+        { at: 8600, keys: down(7) + "\r" }, // router · smaller-model line
+        { at: 9400, keys: "\u007f".repeat(6) + "0.7" },
+        { at: 10000, keys: "\r" },
+        { at: 11000, keys: "\u001b[A".repeat(9) + "\r" }, // router goal: balanced → quality
+        // A line that does nothing now is grayed and still changed, as /config changes any row.
+        { at: 12000, keys: down(9) + "\r" },
+        { at: 12800, keys: "\u007f".repeat(6) + "0.65" },
+        { at: 13400, keys: "\r" },
       ],
-      10,
+      15,
     );
     assert.ok(
       screen.text.includes("vSR settings") &&
         /check +on/.test(screen.text) &&
-        /guard · review line +0\.80 +yours · options 0\.90/.test(screen.text),
+        // Guard is off in the fixture: its line says so, beside whose value it is.
+        /guard · review line +0\.80 +not used: guard off · yours · options 0\.90/.test(
+          screen.text,
+        ) &&
+        // The smaller-model line says it is not used once the goal is not balanced.
+        /router · smaller-model line +0\.65 +not used: quality never goes smaller/.test(
+          screen.last,
+        ),
       screen.text.slice(-6000),
     );
     const snapshot = (await native.rpc("snapshot", {
@@ -456,6 +478,9 @@ test(
     })) as ViewSnapshot;
     assert.equal(snapshot.apps.check, true);
     assert.equal(snapshot.waits.shield, 3000);
+    assert.equal(snapshot.apps.router, true);
+    assert.equal(snapshot.controls.downgradeConfidence, 0.65);
+    assert.equal(snapshot.controls.goal, "quality");
     type Lines = { app: string; values: number[]; source: string }[];
     const guard = async () =>
       ((await native.rpc("thresholds", {})) as Lines).find(

@@ -79,7 +79,8 @@ listener that publishes a System One model.
    own credential store, and vSR switches to the connected runtime at once,
    without a restart. Without a connection, vSR uses the runtime in the
    [options](#options), by default `http://127.0.0.1:8790/v1/decisions`.
-3. **Check it.** Run `/vsr-check` in a session. vSR lists the runtime's models and
+3. **Check it.** Click the `runtime` line at the top of the `/vsr` panel, or
+   pick **check the runtime**, the last row of `/vsr-config`. vSR lists the runtime's models and
    asks one case per enabled app through the path that app takes (a force push
    for guard, a support ticket for redact, a page with hidden instructions for
    shield, an easy task for router, pushback for escalate, an invented summary
@@ -150,25 +151,19 @@ The decisions panel, `/vsr`, is for looking back:
   keeps of it (the full subject, score bar, reason, model, what was hidden,
   tokens, which session and when) and its answers. `Esc` closes the card.
 
-Every control is a command; type `/vsr` to list them. The panel takes the
+There are three commands, as the Claude Code plugin has `/vsr`, `/config` and
+`/vsr:calibrate` (its setup is the `vsr-setup` skill here). The panel takes the
 keyboard when it opens, and `Esc` closes it. To keep the panel open and type,
 press `ctrl+x` then `←` to return to the prompt; there `Esc` interrupts the
 model as usual, and `/vsr` closes the panel.
 
-| Command          | What it does                                                            |
-| ---------------- | ----------------------------------------------------------------------- |
-| `/vsr`           | Open the decisions panel, or close it                                   |
-| `/vsr-apps`      | Turn apps on or off as switches, or hand them back to a Router listener |
-| `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done  |
-| `/vsr-config`    | Every setting in one list, thresholds included, changed in place        |
-| `/vsr-check`     | Check the decision runtime: one case per enabled app                    |
-| `/vsr-turns`     | Route your own turns: `on` or `off`; alone, say where they run          |
-| `/vsr-follow`    | Hand what you changed back to a Router listener's profile               |
-| `/vsr-calibrate` | Fit an app's thresholds to your answers                                 |
-| `/vsr-probe`     | Ask the decision model the 30 known cases; say which flipped or drifted |
+| Command          | What it does                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `/vsr`           | Open the decisions panel, or close it                                                                                                    |
+| `/vsr-config`    | Every setting in one list, thresholds included, changed in place; its last two rows follow a Router listener again and check the runtime |
+| `/vsr-calibrate` | Fit an app's thresholds to your answers, or probe the decision model on its known cases                                                  |
 
-What you change in the panel, `/vsr-apps`, `/vsr-waits`, `/vsr-turns` and
-`/vsr-config` is saved and applies to every session, also after a restart, as
+What you change in the panel and `/vsr-config` is saved and applies to every session, also after a restart, as
 the Claude Code plugin's `/config` does. Changing the same setting in the
 options later wins over it. In `/vsr-config`, `r` on a threshold brings the
 options' back.
@@ -194,7 +189,8 @@ model its definition picks. An agent you gave a model keeps it, recorded as
   sure (confidence 0.6 or more); below 0.5 the subagent keeps your session's
   model. `routing.goal` changes this: `quality` never uses a lighter tier,
   `balanced` is the default, `save` uses one whenever the answer is clear enough
-  to route at all.
+  to route at all. Both lines are in `/vsr-config`: the router's confidence line
+  (0.5) and its smaller-model line (0.6, `routing.downgradeConfidence`).
 - When you push back on an answer (escalate), the next subagent goes one tier
   up, never below your session's, and one effort higher.
 
@@ -206,8 +202,8 @@ a model outside your tiers keep their choice.
 ## Your turns
 
 The router can pick the model of your own turns too, as the Claude Code
-plugin's `/vsr turns on` does: `/vsr-turns on`, `routing.turns` in the options,
-or "routed" on the panel's `your turns` row. It is off by default, since it
+plugin's `/vsr turns on` does: "routed" on the panel's `your turns` row or in
+`/vsr-config`, or `routing.turns` in the options. It is off by default, since it
 changes the model you picked. The same decision model reads each prompt you
 send, and the turn runs on what it picked:
 
@@ -230,12 +226,11 @@ send, and the turn runs on what it picked:
   the move goes ahead.
 - A pushback moves the turn one tier up from where the last one ran, one effort
   level above what it ran at, instead of the next subagent.
-- A model you pick yourself pauses this: your turns stay on it until
-  `/vsr-turns on`, and a toast says so. `/vsr-turns off`, or turning the router
-  off, puts your next turn back on the model you picked.
+- A model you pick yourself pauses this: your turns stay on it until you pick
+  "routed" again, and a toast says so. "yours", or turning the router off, puts
+  your next turn back on the model you picked.
 
-The panel's `your turns` row says where your turns run, `/vsr-turns` says it
-too, and each move is a `routed` router decision for your prompt. Behind a
+The panel's `your turns` row says where your turns run, and each move is a `routed` router decision for your prompt. Behind a
 Router gateway that already routes each call, leave this off.
 
 ## Guard
@@ -291,7 +286,7 @@ Check is off by default because it is slow without a GPU: it reads the answer
 and what the model read that turn, each up to 8,000 characters, and a CPU
 runtime takes several seconds for a long answer, past check's 1.5 s limit. Past
 the limit it steps aside (`skipped`); it never holds the agent up and never
-changes the answer. Turn it on with `/vsr-apps` or `apps.check` when the runtime has a
+changes the answer. Turn it on in the panel, `/vsr-config` or `apps.check` when the runtime has a
 GPU.
 
 It checks the main session's final answer against the `read` and shell output
@@ -347,13 +342,13 @@ Calibration line says when you last calibrated and how many decisions came
 since, and suggests `/vsr-calibrate` after `calibrateEvery` of them (200 by
 default).
 
-`/vsr-probe` asks the decision model the 30 known cases of the Claude Code
-plugin's probe, for each app that is on, and says per app how many it still
+**Probe the decision model**, a choice in `/vsr-calibrate`, asks the decision
+model the 30 known cases of the Claude Code plugin's probe, for each app that is on, and says per app how many it still
 decides as they were measured on vela3-lite. A case **flipped** when the model
 now decides it the other way at the thresholds it was measured at, and
 **drifted** when its score moved more than 0.15. Run it after changing
 `runtimeModel` or the runtime: answers given on the old model's scores may not
-fit the new one. Unlike `/vsr-check`, which asks one case per app through the
+fit the new one. Unlike the runtime check, which asks one case per app through the
 hooks to show each app decides, the probe asks the model directly, so the fixed
 guard rules do not answer for it.
 
@@ -367,11 +362,10 @@ Global Config › vSR agent plugins) turns each app on or off for every plugin
 pointed at it, and its `router_goal` and `router_turns` set the router's goal
 and [your turns](#your-turns), the same eight fields the Claude Code plugin
 reads. What you name in the options (an app under `apps`, `routing.goal`,
-`routing.turns`) or change in vSR (`/vsr-apps`, `/vsr-config`, `/vsr-turns`, the
-panel) stays yours; the listener sets the rest, and a toast says what it changed
-(`vSR follows the listener: redact off, goal save, turns on`). `/vsr-follow`,
-as the Claude Code plugin's `/vsr follow`, or "Follow the Router listener" in
-`/vsr-apps`, hands what you changed back to the listener. A
+`routing.turns`) or change in vSR (the panel, `/vsr-config`) stays yours; the listener sets the rest, and a toast says what it changed
+(`vSR follows the listener: redact off, goal save, turns on`). **follow the
+Router listener**, a row of `/vsr-config` and the Claude Code plugin's
+`/vsr follow`, hands what you changed back to the listener. A
 plain decision runtime sets nothing.
 
 Rules the listener binds to guard and redact (`vsr.rules`) come with the same
@@ -428,7 +422,7 @@ Every option is optional. An unknown option is an error, not ignored.
 | `waits.redact`, `waits.shield`, `waits.guard`          | `3000`, `2000`, `3000`               | How long each waits: `1000`, `2000`, `3000` milliseconds, or `"done"`          |
 | `routing.tiers`                                        | none                                 | Three `{ "model": "provider/model" }`, lightest first, with optional `efforts` |
 | `routing.goal`                                         | `"balanced"`                         | `"quality"` never routes lighter, `"save"` routes lighter whenever it can      |
-| `routing.turns`                                        | `false`                              | Route your own turns too, as `/vsr-turns on` does                              |
+| `routing.turns`                                        | `false`                              | Route your own turns too, as "routed" on the panel does                        |
 | `routing.easyBelow`, `routing.hardFrom`                | `0.65`, `1.5`                        | The difficulty (0 to 2) under which a task is easy, and from which it is hard  |
 | `routing.minConfidence`, `routing.downgradeConfidence` | `0.5`, `0.6`                         | The confidence to route at all, and to route lighter than your session         |
 | `routing.feedbackThreshold`, `routing.repeatThreshold` | `0.7`, `0.8`                         | Escalate's lines for "that's wrong" and "again"                                |
@@ -446,15 +440,15 @@ token cannot be sent to another host.
 
 ## Troubleshooting
 
-- **`/vsr-check` says an app has no answer.** The runtime is not answering at the
+- **The runtime check says an app has no answer.** The runtime is not answering at the
   connected URL, refuses the token, or is slower than the app's wait. Check
   that `vllm-srun serve` is running, or ask for `vsr-setup` again.
 - **A configuration change has no effect.** Type `/reload`. If it still has
   none, run `opencode service restart`.
 - **Reads feel slower.** On a CPU runtime, redact and shield add up to their
   waits to a long output, and guard a fraction of a second per command part. A
-  GPU runtime is several times faster; you can also shorten a wait (`/vsr-waits`) or
-  turn off apps you do not need (`/vsr-apps`).
+  GPU runtime is several times faster; you can also shorten a wait or turn off apps you
+  do not need, in the panel or `/vsr-config`.
 - **A subagent stayed on its model.** The panel's `kept` row says why: the
   router was not sure enough, `routing.goal` is `quality`, or your session's
   model is not one of your tiers.

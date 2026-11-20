@@ -200,8 +200,11 @@ export const Vsr = Rpc.define({
               goal: { enum: ["balanced", "quality", "save"] },
               turns: { type: "boolean" },
               calibrateEvery: { type: "integer", minimum: 0 },
+              downgradeConfidence: { type: "number", minimum: 0, maximum: 1 },
               // What a Router listener's profile changes from the person's settings; empty when nothing.
               note: { type: "string" },
+              // Whether the runtime is a Router listener with a vsr profile to follow.
+              listener: { type: "boolean" },
             },
             required: [
               "revision",
@@ -209,7 +212,9 @@ export const Vsr = Rpc.define({
               "goal",
               "turns",
               "calibrateEvery",
+              "downgradeConfidence",
               "note",
+              "listener",
             ],
             additionalProperties: false,
           },
@@ -537,6 +542,7 @@ export const Vsr = Rpc.define({
           goal: { enum: ["balanced", "quality", "save"] },
           turns: { type: "boolean" },
           calibrateEvery: { type: "integer", minimum: 0, maximum: 100000 },
+          downgradeConfidence: { type: "number", minimum: 0, maximum: 1 },
           follow: { const: true },
         },
         required: ["instanceID", "expectedRevision"],

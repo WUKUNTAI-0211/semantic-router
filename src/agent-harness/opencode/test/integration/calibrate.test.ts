@@ -118,10 +118,12 @@ test(
     const shown = await native.terminal(
       second.sessionID,
       [
-        { at: 12000, keys: "/vsr-probe" },
+        { at: 12000, keys: "/vsr-calibrate" },
         { at: 12800, keys: "\r" },
+        { at: 14000, keys: "Probe" }, // The probe is a choice of /vsr-calibrate's.
+        { at: 14600, keys: "\r" },
       ],
-      18,
+      20,
     );
     assert.ok(
       shown.text.includes("Decision model: fixture.") &&

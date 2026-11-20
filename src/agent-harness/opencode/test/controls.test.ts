@@ -205,3 +205,53 @@ test("turns are saved beside the controls, kept the person's, and an option nami
     { saved: false, reason: "invalid" },
   );
 });
+
+test("the router's line for a smaller tier is kept as calibrateEvery is, and an option naming it wins", async () => {
+  const config = parseSettings({});
+  let saved: unknown;
+  const controls = new Controls(
+    config,
+    "i",
+    async (value) => {
+      saved = value;
+    },
+    () => {},
+  );
+  assert.equal(controls.state().downgradeConfidence, 0.6);
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "i",
+      expectedRevision: 0,
+      downgradeConfidence: 0.75,
+    }),
+    { saved: true, revision: 1 },
+  );
+  assert.equal(config.routing.downgradeConfidence, 0.75);
+  assert.deepEqual(
+    await controls.update({
+      instanceID: "i",
+      expectedRevision: 1,
+      downgradeConfidence: 1.5,
+    }),
+    { saved: false, reason: "invalid" },
+  );
+  const reloaded = parseSettings({});
+  await new Controls(
+    reloaded,
+    "j",
+    async () => {},
+    () => {},
+  ).load(async () => saved);
+  assert.equal(reloaded.routing.downgradeConfidence, 0.75);
+  const named = parseSettings({ routing: { downgradeConfidence: 0.65 } });
+  await new Controls(
+    named,
+    "k",
+    async () => {},
+    () => {},
+    () => {},
+    async () => {},
+    { downgradeConfidence: true },
+  ).load(async () => saved);
+  assert.equal(named.routing.downgradeConfidence, 0.65);
+});

@@ -219,7 +219,7 @@ interface TurnState {
   now?: number;
   // The model vSR last switched the session to, so its own switch is not taken for yours.
   expected?: string;
-  // The model you picked yourself while your turns were routed: they stay on it until /vsr-turns on.
+  // The model you picked yourself while your turns were routed: they stay on it until you pick routed again.
   paused?: string;
   // The last prompt that was not a short reply, read with one.
   task?: string;
@@ -470,7 +470,7 @@ export class Turns {
       state.effort = plan.effort;
     }
   }
-  // `/vsr-turns on` after a pause: your turns follow the router again from the model the session is on now.
+  // Routed again after a pause: your turns follow the router again from the model the session is on now.
   resume(sessionID?: string): void {
     for (const [id, state] of this.sessions)
       if (sessionID === undefined || id === sessionID) this.sessions.delete(id);

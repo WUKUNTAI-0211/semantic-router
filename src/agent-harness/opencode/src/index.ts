@@ -103,7 +103,7 @@ export default Plugin.define({
         id: "vsr-setup",
         name: "vsr-setup",
         description:
-          "Guided setup for vSR, as the Claude Code plugin's /vsr:setup: installs and starts vSR's decision runtime (vllm-srun with vela3-lite) on this machine's GPU or CPU, or points vSR at one that already answers, picks which of its six apps run and their thresholds, writes them, and checks each app against the runtime. Use when vSR was just installed, when /vsr-check says the runtime does not answer, or when the user wants to change vSR's runtime, apps or thresholds.",
+          "Guided setup for vSR, as the Claude Code plugin's /vsr:setup: installs and starts vSR's decision runtime (vllm-srun with vela3-lite) on this machine's GPU or CPU, or points vSR at one that already answers, picks which of its six apps run and their thresholds, writes them, and checks each app against the runtime. Use when vSR was just installed, when the runtime check says it does not answer, or when the user wants to change vSR's runtime, apps or thresholds.",
         path: skillPath,
         content: skillText,
         // The schema brands its IDs and paths; these are plain strings of the right form.
@@ -198,6 +198,7 @@ export default Plugin.define({
         turns: routingNamed.turns !== undefined,
         calibrateEvery:
           isRecord(ctx.options) && ctx.options.calibrateEvery !== undefined,
+        downgradeConfidence: routingNamed.downgradeConfidence !== undefined,
       },
     );
     await controls.load(() => ctx.storage.get("controls.v1"));
@@ -228,12 +229,12 @@ export default Plugin.define({
       },
     );
     turns.changed = () => decisions.changed();
-    // `/vsr-turns on` after you picked a model yourself: your turns follow the router again.
+    // Your turns routed again after you picked a model yourself: your turns follow the router again.
     controls.turned = (on) => {
       if (on) turns.resume();
     };
     listener.noted = () => decisions.changed();
-    // /vsr-check, and the setup skill's check: the runtime in use, then one case per enabled app through its hook's path.
+    // The runtime check (the panel, /vsr-config, and the setup skill's vsr_check): the runtime in use, then one case per enabled app through its hook's path.
     const checkRuntime = async (signal: AbortSignal) => {
       await connect();
       const listed = await runtime.discover(3000, signal);
@@ -256,7 +257,11 @@ export default Plugin.define({
             .map((decision) => decision.id),
           apps: { ...settings.apps },
           waits: { ...settings.waits },
-          controls: { ...controls.state(), note: listener.note },
+          controls: {
+            ...controls.state(),
+            note: listener.note,
+            listener: listener.routed,
+          },
           turns: turns.view(sessionID(input)),
           calibration: calibrationState(),
           runtime: runtime.status(),
@@ -274,7 +279,6 @@ export default Plugin.define({
           .catch(() => {});
         return result;
       },
-      // /vsr-check: the runtime in use, then one case per enabled app through the path its hook takes.
       verify: async (_input, request) => checkRuntime(request.signal),
       calibrationReport: async (_input, request) => {
         const lines = log.all();
@@ -579,7 +583,7 @@ export default Plugin.define({
       editor.add({
         name: "vsr_check",
         description:
-          "Checks vSR's decision runtime: lists its models, then asks one case per enabled app through the path its hook takes and says whether each decided as it does on vela3-lite, and how long it took. The same check as /vsr-check.",
+          "Checks vSR's decision runtime: lists its models, then asks one case per enabled app through the path its hook takes and says whether each decided as it does on vela3-lite, and how long it took. The same check as the panel's runtime line and /vsr-config run.",
         input: { type: "object", properties: {}, additionalProperties: false },
         execute: async (_input: unknown, context: { signal: AbortSignal }) => ({
           content: report(await checkRuntime(context.signal)),

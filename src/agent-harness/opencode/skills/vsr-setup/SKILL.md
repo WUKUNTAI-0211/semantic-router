@@ -2,7 +2,7 @@
 
 vSR asks a small decision model about every child task, prompt, read, shell command and answer. This skill gets that model answering on this machine, or points vSR at one that already answers, picks which apps run and their thresholds, writes them, and checks each app, as the Claude Code plugin's `/vsr:setup` does. Run each command yourself, show what it prints, and ask the user only what they decide, with OpenCode's question tool. Nothing here needs sudo; if a step seems to, stop and tell the user why.
 
-vSR gives you two tools for this: `vsr_settings` says vSR's settings with no input and sets what the user chose with input, kept over the plugin options as `/vsr-config` keeps them; `vsr_check` asks one case per enabled app, as `/vsr-check` does.
+vSR gives you two tools for this: `vsr_settings` says vSR's settings with no input and sets what the user chose with input, kept over the plugin options as `/vsr-config` keeps them; `vsr_check` asks one case per enabled app, as the panel's runtime line does.
 
 The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr/venv`, port 8790, so one runtime serves every agent on this machine.
 
@@ -77,7 +77,7 @@ The runtime is the same one the Claude Code plugin installs: `~/.local/share/vsr
 11. **Hand over.** Tell the user, in this order:
 
 - `/vsr` opens the decisions panel; its top turns apps on and off and picks their waits.
-- `/vsr-config` changes any setting later, thresholds included; `/vsr-check` checks the runtime again.
+- `/vsr-config` changes any setting later, thresholds included, and its last row checks the runtime again; so does a click on the panel's runtime line.
 - After some use, `/vsr-calibrate` fits the thresholds to their own answers.
 
 Done when the user has these steps.

@@ -79,7 +79,7 @@ test(
 );
 
 test(
-  "a Router listener's profile sets the router's goal and turns, says so once, and /vsr-turns changes them",
+  "a Router listener's profile sets the router's goal and turns, says so once, and /vsr-config changes and follows them",
   { timeout: 120000 },
   async (t) => {
     const native = await fixture(t, false, {
@@ -100,39 +100,37 @@ test(
       before.controls.note,
       "vSR follows the listener: redact off, goal save, turns on",
     );
+    assert.equal(before.controls.listener, true);
     const screen = await native.terminal(
       run.sessionID,
       [
-        { at: 2500, keys: "/vsr-turns" },
-        { at: 3000, keys: "\r" }, // Completes the command, which takes a word,
-        { at: 3400, keys: "\r" }, // and without one says where your turns run.
-        { at: 5000, keys: "/vsr-turns off" },
-        { at: 5500, keys: "\r" },
-        { at: 7000, keys: "/vsr" },
-        { at: 7500, keys: "\r" },
+        { at: 2500, keys: "/vsr-config" },
+        { at: 3000, keys: "\r" },
+        { at: 4000, keys: "\u001b[B".repeat(10) + "\r" }, // your turns: routed → yours
+        { at: 4800, keys: "\u001b" },
+        { at: 5800, keys: "/vsr" },
+        { at: 6300, keys: "\r" },
       ],
-      9.5,
+      8.5,
     );
     assert.ok(
       // The toast wraps; the RPC above holds its whole text.
       screen.text.includes("vSR follows the listener: redact off,") &&
-        screen.text.includes(
-          "vSR: the router picks the model of your turns.",
-        ) &&
-        screen.text.includes("vSR: your turns run on the model you picked.") &&
+        /your turns +routed/.test(screen.text) &&
         /your turns +yours +routed/.test(screen.text),
       screen.text.slice(-6000),
     );
     const after = await snapshot();
     assert.equal(after.controls.turns, false, "the person's change wins");
-    // /vsr-follow, as the Claude Code plugin's `/vsr follow`, hands the turns back to the listener.
+    // /vsr-config's follow row, the Claude Code plugin's `/vsr follow`, hands the turns back to the listener.
     const followed = await native.terminal(
       run.sessionID,
       [
-        { at: 2500, keys: "/vsr-follow" },
+        { at: 2500, keys: "/vsr-config" },
         { at: 3000, keys: "\r" },
+        { at: 4000, keys: "\u001b[A\u001b[A\r" }, // the row before the last
       ],
-      5,
+      6,
     );
     assert.ok(
       followed.text.includes("vSR: follows the listener's profile."),

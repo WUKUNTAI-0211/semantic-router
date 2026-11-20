@@ -58,11 +58,39 @@ const WAIT_CHOICES = [1000, 2000, 3000, "done"] as const;
 const waitWords = (wait: Wait) =>
   wait === "done" ? "until done" : `${wait / 1000}s`;
 const GOALS = ["balanced", "quality", "save"] as const;
-// The Claude Code plugin's words for where your turns run.
-const turnsWords = (on: boolean, now = false) =>
-  on
-    ? `vSR: the router picks the model of your turns${now ? " from now on" : ""}.`
-    : "vSR: your turns run on the model you picked.";
+// What each /vsr-config row does and what it depends on: the Claude Code plugin's /config descriptions (plugin.json
+// userConfig), with the agent for Claude and your three tiers for Haiku, Sonnet and Opus.
+const CONFIG_TIPS: Record<string, string> = {
+  router:
+    "Routes each new subagent to your light, medium or strong tier by how hard its task is, and sets its effort by how many steps it needs. Its lines, goal and turns do nothing while it is off.",
+  escalate:
+    "When you push back on an answer, tells the agent to re-check it and sends the next subagent one tier up, or your turn itself with your turns routed. Its two lines do nothing while it is off.",
+  redact:
+    "Hides personal data and secrets in what the agent reads from files and shell output. Its hiding line and wait do nothing while it is off.",
+  shield:
+    "Tells the agent to treat a file or page as data when it tries to give an AI agent instructions. Its warning line and wait do nothing while it is off.",
+  guard:
+    "Holds a shell command for your confirmation when it could cause serious harm. Its review line and wait do nothing while it is off.",
+  check:
+    "Checks an answer against the files and command output the agent read that turn. Off by default: on a CPU runtime a long answer outlasts its wait, so turn it on with a GPU or remote runtime.",
+  redactWait:
+    "How long redact waits for the decision model on a file or command output: 1, 2 or 3 seconds, then what it read in time is hidden and the rest goes unchecked. until done: wait until the check finishes, at most 60 s; if it cannot finish, the output is withheld.",
+  shieldWait:
+    "How long shield waits for the decision model on a file or page: 1, 2 or 3 seconds, then what it read in time is judged and the rest goes unchecked. until done: wait until the check finishes, at most 60 s; if it cannot finish, the output is withheld.",
+  guardWait:
+    "How long guard waits for the decision model on a shell command, all its steps together: 1, 2 or 3 seconds, then a command it could not check runs and only its fixed rules hold. until done: wait until every step is checked, at most 60 s; if one cannot be, the command is held for your confirmation.",
+  goal: "quality: never a smaller tier than yours. balanced: a smaller tier only when the router is sure, at the smaller-model line. save: a smaller tier whenever it answers clearly enough to route, at the confidence line, and the light tier for your turns too.",
+  turns:
+    "routed: the router also picks the tier and effort of each prompt you send. A turn keeps its model through its tool calls, a short reply keeps the last turn's, and a move to a smaller tier waits while rewriting the prompt cache costs more than it saves. A model you pick yourself pauses it until you pick routed again. yours: your turns run on the model you picked.",
+  downgrade:
+    "With the balanced goal, the confidence a move to a smaller tier than yours needs (0 to 1); below it the subagent or your turn keeps its model. save uses the confidence line instead, and quality never goes smaller.",
+  every:
+    "Decisions since the last calibration before the panel suggests /vsr-calibrate. 0 turns it off.",
+  follow:
+    "Hands what you changed here and on the panel back to the Router listener's vsr profile, as the Claude Code plugin's /vsr follow; what the plugin options name stays yours. Only with a Router listener.",
+  checkRuntime:
+    "Asks the decision runtime one case per enabled app through the path its hook takes, as the Claude Code plugin's setup checks it: whether each decides as on vela3-lite, and how long it took.",
+};
 const Span = (props: { fg?: unknown; bg?: unknown; children: JSX.Element }) => (
   <span
     style={
@@ -150,88 +178,40 @@ export default Plugin.define({
       paused = now;
       if (now)
         ctx.ui.toast.show({
-          message: `vSR router: you picked ${now}, so your turns stay on it · /vsr-turns on routes them again`,
+          message: `vSR router: you picked ${now}, so your turns stay on it · pick routed again to route them`,
           variant: "info",
         });
     });
-    // `/vsr-apps`: the apps as switches, in the pane's order, each press applied at once as a click on the pane's
-    // controls is; the last row hands the apps back to a Router listener. Esc closes it.
-    function apps() {
-      if (!current()) return;
-      const rows = [...CONTROL_ROWS.flat(), "follow" as const];
-      const [cursor, setCursor] = createSignal(0);
-      const press = (index: number) => {
-        const row = rows[index]!;
-        if (row === "follow") void controller.change({ follow: true });
-        else void controller.change({ apps: { [row]: !current()?.apps[row] } });
-      };
-      const move = (step: number) =>
-        setCursor((at) => (at + step + rows.length) % rows.length);
-      const Switches = () => {
-        ctx.keymap.layer(() => ({
-          mode: "global",
-          priority: 100,
-          commands: [
-            { title: "Previous app", bind: "up", run: () => move(-1) },
-            { title: "Next app", bind: "down", run: () => move(1) },
-            {
-              title: "Turn the app on or off",
-              bind: "space",
-              run: () => press(cursor()),
-            },
-            {
-              title: "Turn the app on or off",
-              bind: "return",
-              run: () => press(cursor()),
-            },
-          ],
-        }));
-        return (
-          <box flexDirection="column" paddingLeft={2} paddingRight={2}>
-            <text fg={tone("text")}>vSR apps</text>
-            <text fg={tone("muted")}>
-              ↑↓ move · space or enter turn on or off · esc close
-            </text>
-            <box flexDirection="column" marginTop={1} marginBottom={1}>
-              <For each={rows}>
-                {(row, index) => (
-                  <text
-                    onMouseUp={() => {
-                      setCursor(index());
-                      press(index());
-                    }}
-                  >
-                    <Span fg={tone(cursor() === index() ? "info" : "muted")}>
-                      {cursor() === index() ? "› " : "  "}
-                    </Span>
-                    {row === "follow" ? (
-                      <Span fg={tone("text")}>Follow the Router listener</Span>
-                    ) : (
-                      <Span
-                        fg={tone(
-                          current()?.apps[row] ? APP_LOOK[row].tone : "muted",
-                        )}
-                      >
-                        {`${current()?.apps[row] ? "●" : "○"} ${row}`.padEnd(
-                          11,
-                        )}
-                      </Span>
-                    )}
-                    <Span fg={tone("muted")}>
-                      {row === "follow"
-                        ? "  apps changed here go back to the listener's profile"
-                        : `  ${current()?.apps[row] ? "on" : "off"} · ${APP_WORDS[row][1]}`}
-                    </Span>
-                  </text>
-                )}
-              </For>
-            </box>
-          </box>
-        );
-      };
-      ctx.renderer.clearSelection();
-      ctx.ui.dialog.show(() => <Switches />);
-      ctx.ui.dialog.set({ size: "large" });
+    // The runtime check, as the Claude Code plugin's setup verifies it: one case per enabled app. The panel's runtime
+    // line and /vsr-config run it.
+    async function runCheck(): Promise<void> {
+      ctx.ui.toast.show({ message: "vSR: asking the decision runtime…" });
+      const found = await controller.diagnose();
+      if (!found) {
+        ctx.ui.toast.show({
+          message: "Decision runtime check unavailable.",
+          variant: "warning",
+        });
+        return;
+      }
+      await ctx.ui.dialog.alert({
+        title: "vSR decision runtime",
+        message: report(found),
+      });
+    }
+    // The known cases asked again, as the Claude Code plugin's calibrate probes when asked; /vsr-calibrate offers it.
+    async function runProbe(): Promise<void> {
+      const result = await probeNow();
+      if (!result) {
+        ctx.ui.toast.show({
+          message: "vSR probe unavailable; retry when connected.",
+          variant: "warning",
+        });
+        return;
+      }
+      await wide(
+        ctx.ui.dialog.alert({ title: "vSR probe", message: probeText(result) }),
+      );
     }
     // `/vsr-config`, as the Claude Code plugin's /config rows: every setting with its value, changed in place. What it
     // sets is kept in plugin storage over the options, and an option you edit in opencode.jsonc later wins again.
@@ -241,7 +221,10 @@ export default Plugin.define({
       | { kind: "goal" }
       | { kind: "turns" }
       | { kind: "line"; app: App; index: number }
-      | { kind: "every" };
+      | { kind: "downgrade" }
+      | { kind: "every" }
+      | { kind: "follow" }
+      | { kind: "check" };
     const CONFIG_ROWS: ConfigRow[] = [
       ...CONTROL_ROWS.flat().map((app) => ({ kind: "app" as const, app })),
       ...(["redact", "shield", "guard"] as const).map((app) => ({
@@ -250,10 +233,20 @@ export default Plugin.define({
       })),
       { kind: "goal" },
       { kind: "turns" },
-      ...CONTROL_ROWS.flat().flatMap((app) =>
-        LINES[app].map((_, index) => ({ kind: "line" as const, app, index })),
-      ),
+      ...CONTROL_ROWS.flat().flatMap((app): ConfigRow[] => [
+        ...LINES[app].map((_, index) => ({
+          kind: "line" as const,
+          app,
+          index,
+        })),
+        // The balanced goal's line for a smaller tier, after the router's own (the Claude Code plugin's
+        // routerDowngradeConfidence).
+        ...(app === "router" ? [{ kind: "downgrade" as const }] : []),
+      ]),
       { kind: "every" },
+      // Two actions, as the Claude Code plugin's `/vsr follow` and its setup's check.
+      { kind: "follow" },
+      { kind: "check" },
     ];
     type Lines = {
       app: App;
@@ -282,26 +275,44 @@ export default Plugin.define({
       // A threshold is asked for in OpenCode's own prompt, after which the list opens again where it was.
       const ask = async (index: number) => {
         const row = CONFIG_ROWS[index]!;
-        if (row.kind !== "line" && row.kind !== "every") return;
+        if (
+          row.kind !== "line" &&
+          row.kind !== "every" &&
+          row.kind !== "downgrade"
+        )
+          return;
         ctx.ui.dialog.clear();
         const now =
           row.kind === "every"
             ? String(current()?.controls.calibrateEvery ?? 0)
-            : lineOf(row.app).values[row.index]!.toFixed(2);
+            : row.kind === "downgrade"
+              ? (current()?.controls.downgradeConfidence ?? 0).toFixed(2)
+              : lineOf(row.app).values[row.index]!.toFixed(2);
         const typed = await ctx.ui.dialog.prompt({
           title:
             row.kind === "every"
               ? "vSR: calibrate every how many decisions? (0 is off)"
-              : `vSR ${LINES[row.app][row.index]![0]} (${row.app})`,
+              : row.kind === "downgrade"
+                ? "vSR smaller-model line (router)"
+                : `vSR ${LINES[row.app][row.index]![0]} (${row.app})`,
           description:
             row.kind === "every"
               ? "The panel suggests /vsr-calibrate after this many decisions."
-              : `${LINES[row.app][row.index]![1]} From 0 to ${ceilingOf(row.app, row.index)}.`,
+              : row.kind === "downgrade"
+                ? CONFIG_TIPS.downgrade!
+                : `${LINES[row.app][row.index]![1]} From 0 to ${ceilingOf(row.app, row.index)}.`,
           value: now,
         });
         const value = typed === undefined ? NaN : Number(typed.trim());
         if (typed !== undefined && typed.trim() !== now) {
-          if (row.kind === "every") {
+          if (row.kind === "downgrade") {
+            if (!Number.isFinite(value) || value < 0 || value > 1)
+              ctx.ui.toast.show({
+                message: "vSR: a number from 0 to 1.",
+                variant: "warning",
+              });
+            else await controller.change({ downgradeConfidence: value });
+          } else if (row.kind === "every") {
             if (!Number.isInteger(value) || value < 0 || value > 100_000)
               ctx.ui.toast.show({
                 message: "vSR: a whole number from 0 to 100000.",
@@ -353,7 +364,16 @@ export default Plugin.define({
           });
         else if (row.kind === "turns")
           await controller.change({ turns: !snapshot.controls.turns });
-        else await ask(index);
+        else if (row.kind === "follow") {
+          if (await controller.change({ follow: true }))
+            ctx.ui.toast.show({
+              message: "vSR: follows the listener's profile.",
+            });
+        } else if (row.kind === "check") {
+          ctx.ui.dialog.clear();
+          await runCheck();
+          await config(index);
+        } else await ask(index);
       };
       const reset = async (index: number) => {
         const row = CONFIG_ROWS[index]!;
@@ -372,6 +392,9 @@ export default Plugin.define({
         if (row.kind === "goal") return snapshot.controls.goal;
         if (row.kind === "turns")
           return snapshot.controls.turns ? "routed" : "yours";
+        if (row.kind === "follow" || row.kind === "check") return "";
+        if (row.kind === "downgrade")
+          return snapshot.controls.downgradeConfidence.toFixed(2);
         if (row.kind === "every")
           return snapshot.controls.calibrateEvery
             ? `${snapshot.controls.calibrateEvery} decisions`
@@ -389,14 +412,48 @@ export default Plugin.define({
                 ? "your turns"
                 : row.kind === "every"
                   ? "calibrate every"
-                  : `${row.app} · ${LINES[row.app][row.index]![0].toLowerCase()}`;
+                  : row.kind === "follow"
+                    ? "follow the Router listener"
+                    : row.kind === "check"
+                      ? "check the runtime"
+                      : row.kind === "downgrade"
+                        ? "router · smaller-model line"
+                        : `${row.app} · ${LINES[row.app][row.index]![0].toLowerCase()}`;
       // Whose a threshold is: the options', a calibration's, or yours from here.
+      // Why a setting does nothing now, from what reads it: an app's lines and wait need the app on, the router's goal
+      // and turns need the router, and the smaller-model line counts only with the balanced goal. Such a row is grayed
+      // with the reason, and can still be changed, as every row of the Claude Code plugin's /config can.
+      const idleWhy = (row: ConfigRow): string | undefined => {
+        const snapshot = current();
+        if (!snapshot) return undefined;
+        const app =
+          row.kind === "line" || row.kind === "wait"
+            ? row.app
+            : row.kind === "goal" ||
+                row.kind === "turns" ||
+                row.kind === "downgrade"
+              ? "router"
+              : undefined;
+        if (app && !snapshot.apps[app]) return `not used: ${app} off`;
+        if (row.kind === "follow" && !snapshot.controls.listener)
+          return "not used: no Router listener";
+        if (row.kind === "downgrade" && snapshot.controls.goal !== "balanced")
+          return snapshot.controls.goal === "quality"
+            ? "not used: quality never goes smaller"
+            : "not used: save needs only the confidence line";
+        return undefined;
+      };
+      const unused = (row: ConfigRow) => idleWhy(row) !== undefined;
       const noteOf = (row: ConfigRow): string => {
-        if (row.kind !== "line") return "";
-        const line = lineOf(row.app);
-        return line.source === "options"
-          ? ""
-          : `${line.source === "you" ? "yours" : "calibrated"} · options ${line.options[row.index]!.toFixed(2)}`;
+        const line = row.kind === "line" ? lineOf(row.app) : undefined;
+        return [
+          idleWhy(row),
+          line && line.source !== "options"
+            ? `${line.source === "you" ? "yours" : "calibrated"} · options ${line.options[(row as { index: number }).index]!.toFixed(2)}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(" · ");
       };
       const Config = () => {
         ctx.keymap.layer(() => ({
@@ -422,8 +479,12 @@ export default Plugin.define({
           return row.kind === "line"
             ? LINES[row.app][row.index]![1]
             : row.kind === "app"
-              ? APP_WORDS[row.app][1]
-              : "";
+              ? CONFIG_TIPS[row.app]!
+              : row.kind === "wait"
+                ? CONFIG_TIPS[`${row.app}Wait`]!
+                : CONFIG_TIPS[
+                    row.kind === "check" ? "checkRuntime" : row.kind
+                  ]!;
         };
         return (
           <box flexDirection="column" paddingLeft={2} paddingRight={2}>
@@ -443,19 +504,28 @@ export default Plugin.define({
                     <Span fg={tone(cursor() === index() ? "info" : "muted")}>
                       {cursor() === index() ? "› " : "  "}
                     </Span>
-                    <Span fg={tone(cursor() === index() ? "info" : "text")}>
+                    <Span
+                      fg={tone(
+                        unused(row)
+                          ? "muted"
+                          : cursor() === index()
+                            ? "info"
+                            : "text",
+                      )}
+                    >
                       {labelOf(row).padEnd(28)}
                     </Span>
                     <Span
                       fg={tone(
-                        row.kind === "app" && !current()?.apps[row.app]
+                        (row.kind === "app" && !current()?.apps[row.app]) ||
+                          unused(row)
                           ? "muted"
                           : row.kind === "app"
                             ? APP_LOOK[row.app].tone
                             : "text",
                       )}
                     >
-                      {valueOf(row).padEnd(14)}
+                      {valueOf(row).padEnd(11)}
                     </Span>
                     <Span fg={tone("muted")}>{noteOf(row)}</Span>
                   </text>
@@ -471,31 +541,6 @@ export default Plugin.define({
       ctx.renderer.clearSelection();
       ctx.ui.dialog.show(() => <Config />);
       ctx.ui.dialog.set({ size: "large" });
-    }
-    async function waits() {
-      const snapshot = current();
-      if (!snapshot) return;
-      const app = await ctx.ui.dialog.select({
-        title: "vSR wait settings",
-        options: (["redact", "shield", "guard"] as const).map((value) => ({
-          value,
-          title: names[value],
-        })),
-      });
-      if (!app) return;
-      const wait = await ctx.ui.dialog.select<Wait>({
-        title: `${names[app]} wait`,
-        current: snapshot.waits[app],
-        options: ([1000, 2000, 3000, "done"] as const).map((value) => ({
-          value,
-          title:
-            value === "done"
-              ? "Until done (strict; 60-second maximum)"
-              : `${value / 1000} seconds (bounded)`,
-        })),
-      });
-      if (wait !== undefined)
-        await controller.change({ waits: { [app]: wait } });
     }
     // Each call gets its own timeout: one signal made at load would have fired for every call after the first 10 s.
     const call = () => ({ ...options, signal: AbortSignal.timeout(10_000) });
@@ -522,7 +567,7 @@ export default Plugin.define({
     // until the person applies it.
     async function pickApps(
       found: CalibrationReport,
-    ): Promise<App[] | undefined> {
+    ): Promise<App[] | "probe" | undefined> {
       const usable = found.apps.filter((item) => item.decisions > 0);
       // As the Claude Code plugin's step 1: the plain name, what the app does and its answers.
       const title = (item: CalibrationReport["apps"][number]) =>
@@ -531,7 +576,7 @@ export default Plugin.define({
         // The answer count first: a long purpose is cut at the dialog's edge.
         `${item.answered} answer${item.answered === 1 ? "" : "s"}${item.calibrated ? " · calibrated" : ""} · ${APP_WORDS[item.app][1]}`;
       const one = await wide(
-        ctx.ui.dialog.select<App | "several">({
+        ctx.ui.dialog.select<App | "several" | "probe">({
           title: "vSR calibrate: which app?",
           options: [
             ...usable.map((item) => ({
@@ -549,9 +594,17 @@ export default Plugin.define({
                   },
                 ]
               : []),
+            // The Claude Code plugin's calibrate probes when asked; here it is a choice of its own.
+            {
+              value: "probe" as const,
+              title: "Probe the decision model",
+              description:
+                "ask it the 30 known cases; say which flipped or drifted",
+            },
           ],
         }),
       );
+      if (one === "probe") return "probe";
       if (one !== "several") return one ? [one] : undefined;
       return pickSeveral(usable, title, describe);
     }
@@ -826,6 +879,10 @@ export default Plugin.define({
           call(),
         )) as CalibrationReport;
         const apps = await pickApps(found);
+        if (apps === "probe") {
+          await runProbe();
+          return;
+        }
         if (!apps) {
           if (!found.apps.some((item) => item.decisions > 0))
             ctx.ui.toast.show({
@@ -1092,93 +1149,11 @@ export default Plugin.define({
           run: open,
         },
         {
-          id: "vsr.apps",
-          title: "vSR app controls",
-          slash: { name: "vsr-apps" },
-          palette: true,
-          run: apps,
-        },
-        {
-          id: "vsr.waits",
-          title: "vSR wait controls",
-          slash: { name: "vsr-waits" },
-          palette: true,
-          run: waits,
-        },
-        {
-          id: "vsr.diagnose",
-          title: "vSR check the decision runtime",
-          slash: { name: "vsr-check" },
-          palette: true,
-          run: async () => {
-            ctx.ui.toast.show({ message: "vSR: asking the decision runtime…" });
-            const found = await controller.diagnose();
-            if (!found) {
-              ctx.ui.toast.show({
-                message: "Decision runtime check unavailable.",
-                variant: "warning",
-              });
-              return;
-            }
-            await ctx.ui.dialog.alert({
-              title: "vSR decision runtime",
-              message: report(found),
-            });
-          },
-        },
-        {
-          id: "vsr.follow",
-          title: "vSR follow the Router listener's profile again",
-          slash: { name: "vsr-follow" },
-          palette: true,
-          // As the Claude Code plugin's `/vsr follow`: what you changed goes back to the listener's profile.
-          run: async () => {
-            if (await controller.change({ follow: true }))
-              ctx.ui.toast.show({
-                message: "vSR: follows the listener's profile.",
-              });
-          },
-        },
-        {
           id: "vsr.config",
           title: "vSR settings: apps, waits, goal, turns and thresholds",
           slash: { name: "vsr-config" },
           palette: true,
           run: () => void config(),
-        },
-        {
-          id: "vsr.turns",
-          title: "vSR route your own turns: on or off",
-          slash: { name: "vsr-turns", arguments: true },
-          palette: true,
-          run: async (input?: string) => {
-            const snapshot = current();
-            if (!snapshot) return;
-            // The raw input may hold the command itself before its word.
-            const asked = (input ?? "")
-              .trim()
-              .split(/\s+/)
-              .pop()
-              ?.toLowerCase();
-            const say = (message: string) => ctx.ui.toast.show({ message });
-            // As the Claude Code plugin's `/vsr turns [on|off]`: without a word it says where your turns run.
-            if (asked !== "on" && asked !== "off") {
-              say(
-                snapshot.turns.paused
-                  ? `vSR: paused · you picked ${snapshot.turns.paused} · /vsr-turns on routes your turns again.`
-                  : snapshot.turns.on && snapshot.turns.model
-                    ? `vSR: your turns run on ${snapshot.turns.model}, picked by the router.`
-                    : turnsWords(snapshot.controls.turns),
-              );
-              return;
-            }
-            if (asked === "on" && !snapshot.apps.router) {
-              say("vSR: turn on the router first, in /vsr-apps or the panel.");
-              return;
-            }
-            if (await controller.change({ turns: asked === "on" }))
-              say(turnsWords(asked === "on", true));
-          },
         },
         {
           id: "vsr.calibrate",
@@ -1187,30 +1162,8 @@ export default Plugin.define({
           palette: true,
           run: calibrate,
         },
-        {
-          id: "vsr.probe",
-          title: "vSR probe the decision model on known cases",
-          slash: { name: "vsr-probe" },
-          palette: true,
-          run: async () => {
-            const result = await probeNow();
-            if (!result) {
-              ctx.ui.toast.show({
-                message: "vSR probe unavailable; retry when connected.",
-                variant: "warning",
-              });
-              return;
-            }
-            await wide(
-              ctx.ui.dialog.alert({
-                title: "vSR probe",
-                message: probeText(result),
-              }),
-            );
-          },
-        },
       ],
-      bindings: ["vsr.panel", "vsr.apps", "vsr.waits", "vsr.diagnose"],
+      bindings: ["vsr.panel", "vsr.config", "vsr.calibrate"],
     }));
     // The panel's list, newest first, and the decision picked in it.
     const rows = () => [...(current()?.decisions ?? [])].reverse();
@@ -1566,7 +1519,8 @@ export default Plugin.define({
                 {(snapshot) => (
                   <>
                     {/* The list scrolls; the summary lines keep their height instead of drawing over each other. */}
-                    <text flexShrink={0}>
+                    {/* A click checks the runtime, as the Claude Code plugin's setup does. */}
+                    <text flexShrink={0} onMouseUp={() => void runCheck()}>
                       <Span fg={tone(runtimeLook(snapshot()).tone)}>● </Span>
                       runtime {runtimeLook(snapshot()).words}
                       <Span fg={tone("muted")}>
@@ -1576,6 +1530,7 @@ export default Plugin.define({
                           : snapshot().controls.persistence === "durable"
                             ? "saved"
                             : "not saved"}
+                        {" · click to check"}
                       </Span>
                     </text>
                     {/* The Claude Code plugin's controls at the top of its pane: a click on an app turns it on or off,
@@ -1893,7 +1848,7 @@ export default Plugin.define({
               <text flexShrink={0} fg={tone("muted")}>
                 {panel.focused
                   ? "↑↓ pick · Enter details · 1-3 answer · Esc close · ctrl+x ← prompt"
-                  : "click a decision for details · /vsr-apps · /vsr-check"}
+                  : "click a decision for details · /vsr-config · /vsr-calibrate"}
               </text>
             </box>
           );
