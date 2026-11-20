@@ -335,7 +335,8 @@ export const THEME_TOKENS: Record<Tone, readonly string[]> = {
   purple: ["categorical", "1", "200"],
   orange: ["categorical", "3", "200"],
 };
-// The Claude Code plugin's glyphs, one color per app.
+// The Claude Code plugin's glyphs and colors per app (hooks/lib/apps.ts): guard and shield warning, check success,
+// redact merged (purple), router suggestion (blue) and escalate claude (orange).
 export const APP_LOOK: Record<
   keyof typeof APP_NAMES,
   { glyph: string; tone: Tone }
@@ -343,7 +344,7 @@ export const APP_LOOK: Record<
   router: { glyph: "⇢", tone: "info" },
   escalate: { glyph: "↑", tone: "orange" },
   redact: { glyph: "▒", tone: "purple" },
-  shield: { glyph: "◆", tone: "blue" },
+  shield: { glyph: "◆", tone: "warning" },
   guard: { glyph: "‖", tone: "warning" },
   check: { glyph: "✓", tone: "success" },
 };

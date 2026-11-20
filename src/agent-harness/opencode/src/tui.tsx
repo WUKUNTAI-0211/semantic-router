@@ -47,6 +47,16 @@ import type { Verification } from "./verify.ts";
 
 // OpenCode colors a span through its style, which this OpenTUI's span type leaves out.
 // An unset color is left out: OpenTUI cannot parse one that is undefined.
+// The pane's controls, as the Claude Code plugin's: three apps to a row in its order, then each wait and the goal.
+const CONTROL_ROWS: readonly (readonly App[])[] = [
+  ["guard", "check", "shield"],
+  ["redact", "router", "escalate"],
+];
+const CONTROL_LABEL = "redact waits".length + 2;
+const WAIT_CHOICES = [1000, 2000, 3000, "done"] as const;
+const waitWords = (wait: Wait) =>
+  wait === "done" ? "until done" : `${wait / 1000}s`;
+const GOALS = ["balanced", "quality", "save"] as const;
 const Span = (props: { fg?: unknown; bg?: unknown; children: JSX.Element }) => (
   <span
     style={
@@ -118,27 +128,84 @@ export default Plugin.define({
         : undefined;
     };
     const total = () => summary(current()?.decisions ?? []);
-    async function apps() {
-      const snapshot = current();
-      if (!snapshot) return;
-      const app = await ctx.ui.dialog.select<App | "follow">({
-        title: "vSR apps",
-        options: [
-          ...APPS.map((value) => ({
-            value,
-            title: `${names[value]}: ${snapshot.apps[value] ? "on" : "off"}`,
-          })),
-          {
-            value: "follow" as const,
-            title: "Follow the Router listener",
-            description:
-              "Apps changed here go back to the listener's profile; plugin options stay.",
-          },
-        ],
-      });
-      if (app === "follow") await controller.change({ follow: true });
-      else if (app)
-        await controller.change({ apps: { [app]: !snapshot.apps[app] } });
+    // `/vsr-apps`: the apps as switches, in the pane's order, each press applied at once as a click on the pane's
+    // controls is; the last row hands the apps back to a Router listener. Esc closes it.
+    function apps() {
+      if (!current()) return;
+      const rows = [...CONTROL_ROWS.flat(), "follow" as const];
+      const [cursor, setCursor] = createSignal(0);
+      const press = (index: number) => {
+        const row = rows[index]!;
+        if (row === "follow") void controller.change({ follow: true });
+        else void controller.change({ apps: { [row]: !current()?.apps[row] } });
+      };
+      const move = (step: number) =>
+        setCursor((at) => (at + step + rows.length) % rows.length);
+      const Switches = () => {
+        ctx.keymap.layer(() => ({
+          mode: "global",
+          priority: 100,
+          commands: [
+            { title: "Previous app", bind: "up", run: () => move(-1) },
+            { title: "Next app", bind: "down", run: () => move(1) },
+            {
+              title: "Turn the app on or off",
+              bind: "space",
+              run: () => press(cursor()),
+            },
+            {
+              title: "Turn the app on or off",
+              bind: "return",
+              run: () => press(cursor()),
+            },
+          ],
+        }));
+        return (
+          <box flexDirection="column" paddingLeft={2} paddingRight={2}>
+            <text fg={tone("text")}>vSR apps</text>
+            <text fg={tone("muted")}>
+              ↑↓ move · space or enter turn on or off · esc close
+            </text>
+            <box flexDirection="column" marginTop={1} marginBottom={1}>
+              <For each={rows}>
+                {(row, index) => (
+                  <text
+                    onMouseUp={() => {
+                      setCursor(index());
+                      press(index());
+                    }}
+                  >
+                    <Span fg={tone(cursor() === index() ? "info" : "muted")}>
+                      {cursor() === index() ? "› " : "  "}
+                    </Span>
+                    {row === "follow" ? (
+                      <Span fg={tone("text")}>Follow the Router listener</Span>
+                    ) : (
+                      <Span
+                        fg={tone(
+                          current()?.apps[row] ? APP_LOOK[row].tone : "muted",
+                        )}
+                      >
+                        {`${current()?.apps[row] ? "●" : "○"} ${row}`.padEnd(
+                          11,
+                        )}
+                      </Span>
+                    )}
+                    <Span fg={tone("muted")}>
+                      {row === "follow"
+                        ? "  apps changed here go back to the listener's profile"
+                        : `  ${current()?.apps[row] ? "on" : "off"} · ${APP_WORDS[row][1]}`}
+                    </Span>
+                  </text>
+                )}
+              </For>
+            </box>
+          </box>
+        );
+      };
+      ctx.renderer.clearSelection();
+      ctx.ui.dialog.show(() => <Switches />);
+      ctx.ui.dialog.set({ size: "large" });
     }
     async function waits() {
       const snapshot = current();
@@ -1217,29 +1284,103 @@ export default Plugin.define({
                             : "not saved"}
                       </Span>
                     </text>
-                    <text flexShrink={0}>
-                      {APPS.map((app) => (
-                        <Span
-                          fg={
-                            snapshot().apps[app]
-                              ? tone(APP_LOOK[app].tone)
-                              : tone("muted")
-                          }
-                        >
-                          {`${snapshot().apps[app] ? APP_LOOK[app].glyph : "○"} ${names[app]}  `}
-                        </Span>
+                    {/* The Claude Code plugin's controls at the top of its pane: a click on an app turns it on or off,
+                        and one on a wait or goal picks it. */}
+                    <box flexDirection="column" flexShrink={0}>
+                      {CONTROL_ROWS.map((row, index) => (
+                        <box flexDirection="row">
+                          <text fg={tone("muted")}>
+                            {(index === 0 ? "apps" : "").padEnd(CONTROL_LABEL)}
+                          </text>
+                          {row.map((app) => (
+                            <text
+                              marginRight={2}
+                              onMouseUp={() =>
+                                void controller.change({
+                                  apps: { [app]: !snapshot().apps[app] },
+                                })
+                              }
+                            >
+                              <Span
+                                fg={tone(
+                                  snapshot().apps[app]
+                                    ? APP_LOOK[app].tone
+                                    : "muted",
+                                )}
+                              >
+                                {`${snapshot().apps[app] ? "●" : "○"} ${app}`.padEnd(
+                                  10,
+                                )}
+                              </Span>
+                            </text>
+                          ))}
+                        </box>
                       ))}
-                    </text>
-                    <text flexShrink={0} fg={tone("muted")}>
-                      waits{" "}
-                      {Object.entries(snapshot().waits)
-                        .map(
-                          ([app, wait]) =>
-                            `${app} ${wait === "done" ? "until done" : `${wait / 1000}s`}`,
-                        )
-                        .join(" · ")}{" "}
-                      · goal {snapshot().controls.goal}
-                    </text>
+                      {(["redact", "shield", "guard"] as const).map((app) => (
+                        <box flexDirection="row">
+                          <text
+                            fg={tone(snapshot().apps[app] ? "text" : "muted")}
+                          >
+                            {`${app} waits`.padEnd(CONTROL_LABEL)}
+                          </text>
+                          {WAIT_CHOICES.map((choice) => (
+                            <text
+                              marginRight={1}
+                              onMouseUp={() =>
+                                void controller.change({
+                                  waits: { [app]: choice },
+                                })
+                              }
+                            >
+                              {snapshot().waits[app] === choice ? (
+                                <Span
+                                  bg={tone(
+                                    snapshot().apps[app]
+                                      ? APP_LOOK[app].tone
+                                      : "muted",
+                                  )}
+                                  fg={tone("background")}
+                                >
+                                  {` ${waitWords(choice)} `}
+                                </Span>
+                              ) : (
+                                <Span fg={tone("muted")}>
+                                  {` ${waitWords(choice)} `}
+                                </Span>
+                              )}
+                            </text>
+                          ))}
+                        </box>
+                      ))}
+                      <box flexDirection="row">
+                        <text
+                          fg={tone(snapshot().apps.router ? "text" : "muted")}
+                        >
+                          {"router goal".padEnd(CONTROL_LABEL)}
+                        </text>
+                        {GOALS.map((goal) => (
+                          <text
+                            marginRight={1}
+                            onMouseUp={() => void controller.change({ goal })}
+                          >
+                            {snapshot().controls.goal === goal ? (
+                              <Span
+                                bg={tone(
+                                  snapshot().apps.router
+                                    ? APP_LOOK.router.tone
+                                    : "muted",
+                                )}
+                                fg={tone("background")}
+                              >
+                                {` ${goal} `}
+                              </Span>
+                            ) : (
+                              <Span fg={tone("muted")}>{` ${goal} `}</Span>
+                            )}
+                          </text>
+                        ))}
+                      </box>
+                    </box>
                     <text flexShrink={0} marginTop={1}>
                       <strong>{total().total}</strong> decisions
                       <Span fg={tone("muted")}> · </Span>

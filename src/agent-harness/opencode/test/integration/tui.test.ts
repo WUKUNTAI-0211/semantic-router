@@ -23,7 +23,8 @@ test(
         { at: 3700, keys: "\u001b[D" },
         { at: 4000, keys: "/vsr-apps" },
         { at: 4500, keys: "\r" },
-        { at: 5000, keys: "\u001b[B".repeat(5) + "\r" }, // Check is the final option.
+        { at: 5000, keys: "\u001b[B\r" }, // Check is the second switch,
+        { at: 5400, keys: "\u001b" }, // and Esc closes the switches.
         { at: 6000, keys: "/vsr-waits" },
         { at: 6500, keys: "\r" },
         { at: 7000, keys: "\r" },
@@ -61,7 +62,9 @@ test(
     );
     assert.ok(
       screen.text.includes("runtime reachable") &&
-        /[○⇢] Router {2}[○↑] Escalate/.test(screen.text),
+        /apps +[●○] guard +[●○] check +[●○] shield/.test(screen.text) &&
+        /redact waits +1s +2s +3s +until done/.test(screen.text) &&
+        /router goal +balanced +quality +save/.test(screen.text),
       "summary lines must not overlap: " + screen.text.slice(-8000),
     );
     const snapshot = (await native.rpc("snapshot", {
@@ -119,7 +122,8 @@ test(
         { at: 3700, keys: "\u001b[D" },
         { at: 12000, keys: "/vsr-apps" },
         { at: 12500, keys: "\r" },
-        { at: 13000, keys: "\u001b[B".repeat(5) + "\r" },
+        { at: 13000, keys: "\u001b[B\r" },
+        { at: 13400, keys: "\u001b" },
         { at: 14500, keys: "/vsr" },
         { at: 15000, keys: "\r" },
         { at: 15500, resize: [46, 161] },
@@ -367,6 +371,56 @@ test(
       sidebar.last,
       /◆ partial +read …\/fixture\.png\s+↳ unsupported · 0\.01 < 0\.90/,
       sidebar.last,
+    );
+  },
+);
+
+test(
+  "the panel's controls are clicked as the Claude Code plugin's: an app turns on or off, a wait and a goal are picked",
+  { timeout: 90000 },
+  async (t) => {
+    const native = await fixture(t);
+    const run = await native.run("OUTPUT_CASE READ");
+    const open = [
+      { at: 2000, keys: "/vsr" },
+      { at: 2500, keys: "\r" },
+    ];
+    const shown = await native.terminal(run.sessionID, open, 5);
+    const lines = shown.last.split("\n");
+    // An SGR mouse press and release on a control's text.
+    const click = (
+      text: string,
+      line: (row: string) => boolean,
+      at: number,
+    ) => {
+      const row = lines.findIndex(line);
+      assert.ok(row >= 0, shown.last);
+      const where = `${lines[row]!.indexOf(text) + 2};${row + 1}`;
+      return [
+        { at, keys: `\u001b[<0;${where}M` },
+        { at: at + 300, keys: `\u001b[<0;${where}m` },
+      ];
+    };
+    const clicked = await native.terminal(
+      run.sessionID,
+      [
+        ...open,
+        ...click("○ check", (row) => /apps +[●○] guard/.test(row), 3500),
+        ...click("1s", (row) => /shield waits/.test(row), 4500),
+        ...click("save", (row) => /router goal/.test(row), 5500),
+      ],
+      7,
+    );
+    const snapshot = (await native.rpc("snapshot", {
+      sessionID: run.sessionID,
+    })) as ViewSnapshot;
+    assert.equal(snapshot.apps.check, true, clicked.last);
+    assert.equal(snapshot.waits.shield, 1000, clicked.last);
+    assert.equal(snapshot.controls.goal, "save", clicked.last);
+    assert.match(
+      clicked.last,
+      /● check/,
+      "the switch shows it on: " + clicked.last,
     );
   },
 );

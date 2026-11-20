@@ -140,6 +140,9 @@ The decisions panel, `/vsr`, is for looking back:
   Click one, or pick the decision with `↑` `↓` and press its number. The
   answer you gave is filled in. A decision a rule made, or one that was
   skipped, has none.
+- At the top, as in the Claude Code plugin's pane, click an app to turn it on
+  (`●` in its color) or off (`○`), and click how long redact, shield and guard
+  wait, or the router's goal, to pick it.
 - Click a decision, or pick it and press `Enter`, for its card: everything vSR
   keeps of it (the full subject, score bar, reason, model, what was hidden,
   tokens, which session and when) and its answers. `Esc` closes the card.
@@ -152,7 +155,7 @@ model as usual, and `/vsr` closes the panel.
 | Command          | What it does                                                            |
 | ---------------- | ----------------------------------------------------------------------- |
 | `/vsr`           | Open the decisions panel, or close it                                   |
-| `/vsr-apps`      | Turn an app on or off, or hand the apps back to a Router listener       |
+| `/vsr-apps`      | Turn apps on or off as switches, or hand them back to a Router listener |
 | `/vsr-waits`     | Choose how long redact, shield and guard wait: 1 to 3 s, or until done  |
 | `/vsr-check`     | Check the decision runtime: one case per enabled app                    |
 | `/vsr-goal`      | Choose the router's goal: balanced, quality or save                     |
