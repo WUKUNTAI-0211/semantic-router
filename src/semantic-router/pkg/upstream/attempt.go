@@ -137,6 +137,7 @@ func (c *call) begin(ctx context.Context, ep *endpoint, start time.Time, release
 		))
 	r := &run{ctx: spanCtx, cancel: cancel, span: span, ep: ep, owner: c.cluster, cluster: name, release: release}
 	r.timers = &attemptTimers{cancel: cancel}
+	ep.starts.Store(r, start)
 	r.timers.arm(c.policy.Timeouts.PerTry, StagePerTry)
 	r.conn.onWrote = func() { r.timers.arm(c.policy.Timeouts.FirstByte, StageFirstByte) }
 	return r
@@ -209,6 +210,7 @@ func (r *run) finish(outcome string, failure *Error) {
 		}
 		r.release()
 		r.ep.active.Add(-1)
+		r.ep.starts.Delete(r)
 		metrics.AddUpstreamActiveRequests(r.cluster, r.ep.spec.Name, -1)
 		if r.served {
 			metrics.RecordUpstreamStream(r.cluster, r.ep.spec.Name, outcome)

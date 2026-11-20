@@ -18,6 +18,8 @@ type endpoint struct {
 	spec EndpointSpec
 	// active counts requests in flight, streamed bodies included.
 	active atomic.Int64
+	// starts holds the start time of each in-flight attempt (#6871 experiment).
+	starts sync.Map
 	// outlier and health are guarded by the cluster's mutex.
 	outlier outlierState
 	health  healthState

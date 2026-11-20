@@ -1,0 +1,6 @@
+# replica1.metrics
+vllm:prefix_cache_hits_total{engine="0",model_name="/root/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca"} 729920.0
+vllm:prompt_tokens_total{engine="0",model_name="/root/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca"} 1.992646e+06
+# replica2.metrics
+vllm:prefix_cache_hits_total{engine="0",model_name="/root/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca"} 806144.0
+vllm:prompt_tokens_total{engine="0",model_name="/root/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca"} 2.066253e+06

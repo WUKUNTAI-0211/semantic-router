@@ -57,3 +57,19 @@ are not a throughput measure, and a p99 over about 400 requests rests on about 4
 - vLLM's prefix-cache queries counter counts waiting requests again on every step; use hits against prompt tokens.
 - The Router config needs a `recipes` default route and an `entrypoints` entry for `vllm-sr/auto`, or the tester's
   requests get 400; the tester needs `aiohttp`, or it can't read the model name.
+
+## Experiment: other load_aware scores
+
+Not part of #6871's scope, which leaves Router changes to their own issues. This commit's Router patch lets
+`SR_LOAD_AWARE_SCORE` swap the score, and `run_variants.sh` runs the three interleaved in one overnight batch with
+no other load on the GPU, so compare them only with each other (`records/var*`):
+
+| Score | Uneven TTFT p50, run 1 / 2 | Requests | Prefix hits / tester input tokens |
+| --- | --- | --- | --- |
+| A: engine waiting + Router in-flight (as merged) | 13.1 / 14.4 s | 410 / 402 | 37% / 47% |
+| B: engine waiting + running | 27.5 / 34.3 s | 351 / 307 | 30% / 32% |
+| C: B + Router requests started after the last scrape | 23.1 / 20.8 s | 348 / 371 | 35% / 37% |
+
+Under uniform load all three are within noise. B and C even out the engines' totals and send more Router traffic
+into replica 2's queue. These runs can't separate two causes: request counts not reflecting work (each bypass
+request decodes 1,024 tokens) and sessions losing their cached prefixes when they move.

@@ -2,7 +2,9 @@ package upstream
 
 import (
 	"math"
+	"os"
 	"slices"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/backendtelemetry"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
@@ -117,9 +119,27 @@ func (b *loadAware) score(host *endpoint, telemetry TelemetryReader) (score int6
 	if !ok {
 		return 0, false, loadAwareMissingMetric
 	}
+	switch scoreVariant {
+	case "engine":
+		running, _ := observation.ActiveRequests.Get()
+		return queued + running, true, ""
+	case "engine_plus_new":
+		running, _ := observation.ActiveRequests.Get()
+		var newer int64
+		host.starts.Range(func(_, v any) bool {
+			if v.(time.Time).After(observation.CollectedAt) {
+				newer++
+			}
+			return true
+		})
+		return queued + running + newer, true, ""
+	}
 	active := host.active.Load()
 	if active > math.MaxInt64-queued {
 		return math.MaxInt64, true, ""
 	}
 	return queued + active, true, ""
 }
+
+// scoreVariant selects the #6871 experimental score (local only).
+var scoreVariant = os.Getenv("SR_LOAD_AWARE_SCORE")
