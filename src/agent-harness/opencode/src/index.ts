@@ -294,10 +294,15 @@ export default Plugin.define({
         if (
           !isRecord(input) ||
           typeof input.id !== "string" ||
-          typeof input.label !== "string"
+          (typeof input.label !== "string" && input.label !== null)
         )
           throw new Error("Invalid label");
-        return { saved: log.label(input.id, input.label as Label) };
+        return {
+          saved:
+            input.label === null
+              ? log.unlabel(input.id)
+              : log.label(input.id, input.label as Label),
+        };
       },
       calibrationSuggest: async (input) => {
         const app = appOf(input);

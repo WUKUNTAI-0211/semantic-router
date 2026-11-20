@@ -155,7 +155,12 @@ test(
       27,
     );
     assert.ok(
-      screen.text.includes("vSR calibrate: 2 of 8 answers") &&
+      // The line shows where each question is in its round; the header counts the answers.
+      screen.text.includes("question 1 of 2") &&
+        screen.text.includes("question 2 of 2") &&
+        screen.text.includes("Injection warnings · 1 of 8 answers") &&
+        screen.text.includes("Injection warnings · 3 of 8 answers") &&
+        screen.text.includes("vSR calibrate: 2 of 8 answers") &&
         screen.text.includes("Answer more questions") &&
         screen.text.includes("vSR calibrate: 4 of 8 answers"),
       screen.text.slice(-6000),
@@ -212,5 +217,51 @@ test(
       1,
       "one goal for both",
     );
+  },
+);
+
+test(
+  "a calibration answer can be changed: ← goes back to it, and not sure takes the saved answer back",
+  { timeout: 300000 },
+  async (t) => {
+    const native = await fixture(t);
+    let last = await native.run("OUTPUT_CASE READ");
+    for (let i = 0; i < 3; i++) last = await native.run("OUTPUT_CASE READ");
+    const screen = await native.terminal(
+      last.sessionID,
+      [
+        { at: 12000, keys: "/vsr-calibrate" },
+        { at: 12800, keys: "\r" },
+        { at: 14000, keys: "Injection" },
+        { at: 14600, keys: "\r" },
+        { at: 16000, keys: "\r" }, // The report: continue.
+        { at: 17500, keys: "\r" }, // First question: yes.
+        { at: 18700, keys: "\x1b[D" }, // ← back to it.
+        { at: 19900, keys: "3" }, // Changed to not sure: the yes is taken back.
+        { at: 21100, keys: "\x1b[D" }, // ← back again,
+        { at: 22300, keys: "\x1b[C" }, // → on, keeping it,
+        { at: 23500, keys: "\x1b[D" }, // and ← back, where the run ends.
+      ],
+      26,
+    );
+    assert.ok(
+      screen.text.includes("← back") &&
+        screen.text.includes("→ next") &&
+        screen.text.includes("Injection warnings · 1 of 8 answers"),
+      screen.text.slice(-6000),
+    );
+    // The line moved back with ←: the run ends on the first question, its not sure marked.
+    assert.match(screen.last, /question 1 of 2/, screen.last);
+    assert.match(screen.last, /Not sure \(skip\) ✓ your answer/, screen.last);
+    assert.match(
+      screen.last,
+      /Injection warnings · 0 of 8 answers/,
+      "the yes was taken back",
+    );
+    const after = (await native.rpc(
+      "calibrationReport",
+      {},
+    )) as CalibrationReport;
+    assert.equal(after.apps.find((item) => item.app === "shield")!.answered, 0);
   },
 );

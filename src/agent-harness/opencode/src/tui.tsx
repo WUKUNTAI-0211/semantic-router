@@ -334,30 +334,36 @@ export default Plugin.define({
       });
     }
     // A calibration question as its own dialog, without the select's search: the question, the decision in a box
-    // named for what it is, what vSR did and its score, then the answers. ↑↓ and Enter, a digit, or a click answer.
+    // named for what it is, what vSR did and its score, then the answers. ↑↓ and Enter, a digit, or a click answer;
+    // ← goes back to the question before, and → on to the next one when this one was answered already.
+    type Reply =
+      | ReturnType<typeof calibrationQuestion>["options"][number]["value"]
+      | "back"
+      | "forward";
     function ask(
       shown: ReturnType<typeof calibrationQuestion>,
-      progress: string,
+      header: string,
       routed: boolean,
-    ): Promise<
-      | ReturnType<typeof calibrationQuestion>["options"][number]["value"]
-      | undefined
-    > {
+      step: number,
+      steps: number,
+      previous: Reply | undefined,
+      back: boolean,
+    ): Promise<Reply | undefined> {
       return new Promise((resolve) => {
-        const [cursor, setCursor] = createSignal(0);
+        const given = shown.options.findIndex(
+          (option) => option.value === previous,
+        );
+        const [cursor, setCursor] = createSignal(Math.max(0, given));
         let settled = false;
-        const settle = (
-          value:
-            | ReturnType<typeof calibrationQuestion>["options"][number]["value"]
-            | undefined,
-        ) => {
+        const settle = (value: Reply | undefined) => {
           if (settled) return;
           settled = true;
           resolve(value);
         };
         const count = shown.options.length;
-        const pick = (index: number) => {
-          settle(shown.options[index]!.value);
+        const pick = (index: number) => leave(shown.options[index]!.value);
+        const leave = (value: Reply) => {
+          settle(value);
           ctx.ui.dialog.clear();
         };
         const Question = () => {
@@ -376,6 +382,18 @@ export default Plugin.define({
                 run: () => setCursor((at) => (at + 1) % count),
               },
               { title: "Answer", bind: "return", run: () => pick(cursor()) },
+              {
+                title: "Previous question",
+                bind: "left",
+                enabled: back,
+                run: () => leave("back"),
+              },
+              {
+                title: "Next question",
+                bind: "right",
+                enabled: given >= 0,
+                run: () => leave("forward"),
+              },
               ...shown.options.map((_, index) => ({
                 title: `Answer ${index + 1}`,
                 bind: String(index + 1),
@@ -386,7 +404,26 @@ export default Plugin.define({
           const on = (index: number) => cursor() === index;
           return (
             <box flexDirection="column" paddingLeft={2} paddingRight={2}>
-              <text fg={tone("muted")}>{progress}</text>
+              <text fg={tone("muted")}>{header}</text>
+              {/* Where this question is in the round, one segment each: it moves back and on with ← and →. */}
+              <text>
+                {Array.from({ length: steps }, (_, index) => (
+                  <Span
+                    fg={tone(
+                      index < step
+                        ? "info"
+                        : index === step
+                          ? "warning"
+                          : "border",
+                    )}
+                  >
+                    {index ? " ━━━" : "━━━"}
+                  </Span>
+                ))}
+                <Span fg={tone("muted")}>
+                  {`  question ${step + 1} of ${steps}`}
+                </Span>
+              </text>
               <text marginTop={1} fg={tone("info")}>
                 {shown.title}
               </text>
@@ -421,12 +458,23 @@ export default Plugin.define({
                       <Span fg={tone(on(index()) ? "info" : "text")}>
                         {option.title}
                       </Span>
+                      {index() === given ? (
+                        <Span fg={tone("success")}> ✓ your answer</Span>
+                      ) : (
+                        ""
+                      )}
                     </text>
                   )}
                 </For>
               </box>
               <text marginTop={1} marginBottom={1} fg={tone("muted")}>
-                {`↑↓ move · enter or 1-${count} answer · esc stop`}
+                {[
+                  "↑↓ move",
+                  `enter or 1-${count} answer`,
+                  ...(back ? ["← back"] : []),
+                  ...(given >= 0 ? ["→ next"] : []),
+                  "esc stop",
+                ].join(" · ")}
               </text>
             </box>
           );
@@ -470,24 +518,72 @@ export default Plugin.define({
         // Rounds of a few questions, as Claude Code's step 4 does: while an app is short of MIN_LABELS answers and
         // something is left to ask about it, offer another round for the apps that are short.
         const asked = new Set<string>();
+        // Each app's answers so far, for the line on each question; a skipped question adds none.
+        const answered = new Map(
+          apps.map((app) => [
+            app,
+            found.apps.find((item) => item.app === app)!.answered,
+          ]),
+        );
+        // Every question asked this run, in order, with its answer: ← and → walk it, and a changed answer replaces the
+        // saved one, or takes it back when it becomes "not sure".
+        const queue: {
+          app: App;
+          question: CalibrationQuestion;
+          // Its place in the round it was asked in, across the round's apps.
+          step: number;
+          steps: number;
+          answer?: Reply;
+        }[] = [];
+        const counts = (value: Reply | undefined) =>
+          value !== undefined && value !== "skip";
+        let at = 0;
         let round = apps;
         rounds: for (;;) {
-          for (const app of round) {
-            const questions = await sample(app, asked);
-            for (const [n, question] of questions.entries()) {
+          const fresh: { app: App; question: CalibrationQuestion }[] = [];
+          for (const app of round)
+            for (const question of await sample(app, asked)) {
               asked.add(question.id);
-              const answer = await ask(
-                calibrationQuestion(question),
-                `vSR calibrate · ${APP_WORDS[app][0]} · question ${n + 1} of ${questions.length}`,
-                app === "router",
-              );
-              if (!answer || answer === "stop") break rounds;
-              if (answer !== "skip")
-                await remote.calibrationLabel(
-                  { id: question.id, label: answer },
-                  call(),
-                );
+              fresh.push({ app, question });
             }
+          fresh.forEach((item, step) =>
+            queue.push({ ...item, step, steps: fresh.length }),
+          );
+          while (at < queue.length) {
+            const item = queue[at]!;
+            const reply = await ask(
+              calibrationQuestion(item.question),
+              `vSR calibrate · ${APP_WORDS[item.app][0]} · ${answered.get(item.app)!} of ${MIN_LABELS} answers`,
+              item.app === "router",
+              item.step,
+              item.steps,
+              item.answer,
+              at > 0,
+            );
+            if (!reply || reply === "stop") break rounds;
+            if (reply === "back" || reply === "forward") {
+              at += reply === "back" ? -1 : 1;
+              continue;
+            }
+            if (reply !== item.answer) {
+              const saved = (await remote.calibrationLabel(
+                {
+                  id: item.question.id,
+                  label: reply === "skip" ? null : reply,
+                },
+                call(),
+              )) as { saved: boolean };
+              if (saved.saved || reply === "skip") {
+                answered.set(
+                  item.app,
+                  answered.get(item.app)! +
+                    Number(counts(reply)) -
+                    Number(counts(item.answer)),
+                );
+                item.answer = reply;
+              }
+            }
+            at++;
           }
           const report = (await remote.calibrationReport(
             {},

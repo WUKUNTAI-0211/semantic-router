@@ -242,6 +242,14 @@ export class DecisionLog {
     this.write(line);
     return true;
   }
+  // Takes an answer back: the line counts as unanswered again.
+  unlabel(id: string): boolean {
+    const line = this.lines.get(id);
+    if (!line?.label) return false;
+    delete line.label;
+    this.write(line);
+    return true;
+  }
   // How many lines came after `at`, without copying the log: the decision view asks on every refresh.
   countSince(at: number): number {
     let count = 0;

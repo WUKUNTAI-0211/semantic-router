@@ -383,7 +383,8 @@ export const Vsr = Rpc.define({
         type: "object",
         properties: {
           id,
-          label: { enum: ["yes", "no", "too-low", "right", "too-high"] },
+          // null takes an answer back, when the person changes it to "not sure".
+          label: { enum: ["yes", "no", "too-low", "right", "too-high", null] },
         },
         required: ["id", "label"],
         additionalProperties: false,

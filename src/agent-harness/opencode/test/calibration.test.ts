@@ -190,6 +190,15 @@ test("the log outlives a restart with its labels, keeps the newest lines and fol
   assert.equal(kept?.subject, "git push --force origin main");
   assert.equal(kept?.label, "yes");
   assert.equal(kept?.outcome, "declined");
+  // An answer taken back leaves the line unanswered, also after a reload.
+  assert.equal(reloaded.unlabel(kept!.id), true);
+  assert.equal(reloaded.unlabel(kept!.id), false, "nothing left to take back");
+  await reloaded.flushed();
+  const again = new DecisionLog(store, config);
+  await again.load();
+  assert.equal(again.all()[0]?.label, undefined);
+  assert.equal(again.label(kept!.id, "yes"), true);
+  await again.flushed();
 
   for (let i = 0; i < KEPT_LINES + 2; i++)
     reloaded.recorded({
