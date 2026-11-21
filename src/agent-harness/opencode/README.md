@@ -94,7 +94,9 @@ While the agent runs, the line above the prompt shows the newest decision, so
 it sits under the step it was made on:
 `vSR  REDACTED ▒ read …/customer.txt  email ×1 · phone ×1  · 9 decisions · /vsr`.
 It names what redact hid, the model the router picked, or the score against its
-threshold, and counts in red the decisions to look at. The sidebar (OpenCode's
+threshold, and counts in red the decisions to look at. When vSR routes your own
+turn, the line shows the model and why it was picked in place of the prompt, and
+the decision's card keeps the reason. The sidebar (OpenCode's
 "Show sidebar", `<leader>b`) lists the session's decisions in order, one line
 each: what let things be in gray, and under one that needs a look or went
 through only in part, why (`↳ unsupported · 0.01 < 0.90`), as a Claude Code

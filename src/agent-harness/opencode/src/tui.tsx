@@ -34,6 +34,7 @@ import {
   THEME_TOKENS,
   tokenCount,
   toneOf,
+  turnRouteReason,
   why,
 } from "./view.ts";
 import type {
@@ -1438,6 +1439,10 @@ export default Plugin.define({
       ctx.ui.dialog.show(() => <DetailCard id={id} />);
     }
     const latest = () => current()?.decisions.at(-1);
+    const latestRouteReason = () => {
+      const decision = latest();
+      return decision && turnRouteReason(decision);
+    };
     // Above the prompt, the newest decision as it is made, under the step it was made on.
     const offComposer = ctx.ui.slot({
       append: "session.composer.top",
@@ -1458,7 +1463,9 @@ export default Plugin.define({
           ) : (
             ""
           )}
-          {latest() ? clip(shortSubject(latest()!), 48) : ""}
+          {latest() && !latestRouteReason()
+            ? clip(shortSubject(latest()!), 48)
+            : ""}
           {latest() && brief(latest()!) ? (
             <Span fg={tone(APP_LOOK[latest()!.app].tone)}>
               {`  ${brief(latest()!)}`}
@@ -1466,6 +1473,9 @@ export default Plugin.define({
           ) : (
             ""
           )}
+          <Show when={latestRouteReason()}>
+            {(reason) => <Span fg={tone("text")}>{` · ${reason()}`}</Span>}
+          </Show>
           <Span fg={tone("muted")}>
             {`${latest() ? "  · " : "· "}${view.loading ? "syncing · " : ""}${total().total} decisions · /vsr`}
           </Span>

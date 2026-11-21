@@ -541,6 +541,7 @@ test(
       .map((line) => line.slice(0, 46))
       .join("\n");
     assert.match(visible, /answer +none yet/, visible);
+    assert.match(visible, /reason +High difficulty 1\.80 ≥ 1\.50/, visible);
     assert.match(visible, /\[1 right model\] +\[2 needed stronger\]/, visible);
     assert.match(visible, /\[3 could be lighter\]/, visible);
   },
@@ -604,6 +605,12 @@ test(
         .filter((decision) => decision.scope === "turn")
         .at(-1)?.reason,
       "pushback",
+    );
+    const routedScreen = await native.terminal(id, [], 3);
+    assert.match(
+      routedScreen.last,
+      /→ strong#medium · Routed after pushback/,
+      routedScreen.last,
     );
     // --model selects a model through the same native event as /model.
     await native.run("Keep using the model I picked for this turn", id);

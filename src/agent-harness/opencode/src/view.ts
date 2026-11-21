@@ -985,6 +985,25 @@ export function why(decision: Decision): string {
     .filter(Boolean)
     .join(" · ");
 }
+// What prompted a route of the user's own turn, using the lines recorded with that decision.
+export function turnRouteReason(decision: Decision): string | undefined {
+  if (
+    decision.app !== "router" ||
+    decision.scope !== "turn" ||
+    decision.outcome !== "routed"
+  )
+    return undefined;
+  if (decision.reason === "pushback") return "Routed after pushback";
+  const { score, thresholds } = decision;
+  if (decision.reason !== "selected" || score === undefined) return undefined;
+  const [light, strong] = thresholds ?? [];
+  const level = score.toFixed(2);
+  if (strong !== undefined && score >= strong)
+    return `High difficulty ${level} ≥ ${strong.toFixed(2)}`;
+  if (light !== undefined && strong !== undefined)
+    return `${score < light ? "Low" : "Medium"} difficulty ${level}`;
+  return `Task difficulty ${level}`;
+}
 // Everything the view keeps of a decision, one labelled row each, for its detail card under its score bar. Rows with
 // nothing to say are left out.
 export function details(
@@ -1004,9 +1023,10 @@ export function details(
     ["confidence", decision.confidence?.toFixed(2)],
     [
       "reason",
-      decision.reason && decision.reason !== "selected"
-        ? decision.reason.replaceAll("-", " ")
-        : undefined,
+      turnRouteReason(decision) ??
+        (decision.reason && decision.reason !== "selected"
+          ? decision.reason.replaceAll("-", " ")
+          : undefined),
     ],
     [
       "model",
