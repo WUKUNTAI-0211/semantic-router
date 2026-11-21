@@ -247,7 +247,12 @@ test(
       /vSR +(REDACTED|SHIELDED) +[▒◆] read …\/fixture\.txt .*· 2 decisions · \/vsr/,
       screen.last,
     );
-    assert.match(screen.last, /vSR +· 2 decisions · \/vsr/, screen.last);
+    assert.match(screen.last, /▝██▍▐██▏/, screen.last);
+    assert.match(
+      screen.last,
+      /vLLM Semantic Router[^\n]*\n(?:[^\n]*\n){0,3}[^\n]*2 decisions · \/vsr/,
+      screen.last,
+    );
     assert.match(screen.last, /▒ redacted +read …\/fixture\.txt/, screen.last);
     assert.match(screen.last, /◆ shielded +read …\/fixture\.txt/, screen.last);
   },

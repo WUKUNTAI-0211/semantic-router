@@ -121,6 +121,41 @@ const Span = (props: { fg?: unknown; bg?: unknown; children: JSX.Element }) => (
     {props.children}
   </span>
 );
+const BRAND_YELLOW = "#fdb618";
+const BRAND_BLUE = "#32a3ff";
+
+// The four-row block mark from the Claude Code plugin's mark-art.ts.
+const SidebarWordmark = () => (
+  <box flexDirection="row" alignItems="center" gap={2}>
+    <box flexDirection="column" flexShrink={0} width={8}>
+      <text wrapMode="none">
+        <Span fg={BRAND_YELLOW}>▁▁▁</Span>
+        {"  "}
+        <Span fg={BRAND_BLUE}>▃▅▋</Span>
+      </text>
+      <text wrapMode="none">
+        <Span fg={BRAND_YELLOW}>▝██▍</Span>
+        <Span fg={BRAND_BLUE}>▐██▏</Span>
+      </text>
+      <text wrapMode="none">
+        {" "}
+        <Span fg={BRAND_YELLOW}>▝█▍</Span>
+        <Span fg={BRAND_BLUE}>██▌</Span>
+      </text>
+      <text wrapMode="none">
+        {"  "}
+        <Span fg={BRAND_YELLOW}>▝</Span>
+        <Span fg={BRAND_YELLOW} bg={BRAND_BLUE}>
+          ▍
+        </Span>
+        <Span fg={BRAND_BLUE}>██</Span>
+      </text>
+    </box>
+    <text>
+      <b>vLLM Semantic Router</b>
+    </text>
+  </box>
+);
 const names: Record<App, string> = APP_NAMES;
 export default Plugin.define({
   id: "vsr.opencode.tui",
@@ -1283,8 +1318,8 @@ export default Plugin.define({
       (
         [
           ["v", tone("text")],
-          ["S", "#fdb618"],
-          ["R", "#32a3ff"],
+          ["S", BRAND_YELLOW],
+          ["R", BRAND_BLUE],
         ] as const
       ).map(([letter, color]) => (
         <b style={{ fg: color } as object}>{letter}</b>
@@ -1454,11 +1489,9 @@ export default Plugin.define({
           }
         >
           <box flexDirection="column" marginTop={1}>
-            <text>
-              <Brand />
-              <Span fg={tone("muted")}>
-                {` · ${total().total} decisions · /vsr`}
-              </Span>
+            <SidebarWordmark />
+            <text fg={tone("muted")}>
+              {`${total().total} decisions · /vsr`}
             </text>
             <Show when={current()!.decisions.length > SIDEBAR_ROWS}>
               <text fg={tone("muted")}>
